@@ -5,7 +5,7 @@ from scipy.ndimage.measurements import label
 
 from scipy.ndimage.morphology import generate_binary_structure
 
-from matplotlib import pyplot
+from matplotlibc import pyplot
 
 class GameBoard():
     GAMEBOX = [[227, 51], [1048, 682]]

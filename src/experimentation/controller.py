@@ -82,31 +82,10 @@ def writeThenRead(val):
         print("Read: ", line)
     time.sleep(1) 
 
-def bitCheck():
-    while ser.inWaiting():
-        line = ser.readline()
-        print("Read: ", line)
+def passOnButtons():
+    val = 0
+    if 
 
-    for i in range(7):
-        b = 1 << i
-        print("{0}: {1} ({2:b})".format(i, bytes([b]), b))
-        writeThenRead(b)
-        checkButtons()
-       
-
-    for i in range(7):
-        shift = 1 << 7
-        b = (1 << i) | shift
-        print("{0}: {1} ({2:b})".format(i, bytes([b]), b))
-        writeThenRead(b)
-        checkButtons()
-
-def seqCheck():
-    for i in range(25):
-        writeThenRead(i)
-        checkButtons()
-        writeThenRead(255)
-        checkButtons()
 
 if __name__ == '__main__':
 
@@ -114,7 +93,7 @@ if __name__ == '__main__':
 
     ser = serial.Serial('/dev/ttyACM0')
 
-    seqCheck()
+    passOnButtons()
 
     if ser is not None:
         ser.close()

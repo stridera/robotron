@@ -57,7 +57,7 @@ def checkButtons(dontPrint=False):
                 button_status = axis_names[i][1][0]
             if axes > 0:
                 button_status = axis_names[i][1][1]
-            print("(Axis {0}) {1}: {2}".format(i, axis_names[i][0], button_status))
+            print("(Axis {0}) {1}: {2}".format(i, axis_names[i][0], button_status)) 
             axes_pressed[i] = axis
 
     for i in range( buttons ):

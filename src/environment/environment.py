@@ -1,21 +1,26 @@
 import cv2
+import sys
 # import numpy as np
 
 from .ScoreProcessor import ScoreProcessor
 from .LivesProcessor import LivesProcessor
+from .NoiseFilter import NoiseFilter
 
 
 class Environment():
     GAMEBOX = [114, 309, 608, 975]
+    FILTERSIZE = 15
 
-    def __init__(self, show=True):
+    def __init__(self, show=False):
         ''' constructor '''
         self.ScoreProcessor = ScoreProcessor()
         self.LivesProcessor = LivesProcessor()
 
+        self.score = NoiseFilter(self.FILTERSIZE)
+        self.lives = NoiseFilter(self.FILTERSIZE)
+
         self.frame = 0
-        self.score = 0
-        self.lives = 0
+        self.reward = 0
         self.showScreen = show
 
         self.cap = cv2.VideoCapture(0)
@@ -24,8 +29,9 @@ class Environment():
 
     def reset(self):
         self.frame = 0
-        self.score = 0
-        self.lives = 0
+        self.reward = 0
+        self.score = NoiseFilter(self.FILTERSIZE)
+        self.lives = NoiseFilter(self.FILTERSIZE)
 
     def hideScreen(self):
         self.showScreen = False
@@ -54,7 +60,7 @@ class Environment():
             cv2.putText(image, line, (x, y), font, size, color, weight)
         return image
 
-    def process(self):
+    def process(self, image_only=False):
         active = False
         done = False
 
@@ -66,33 +72,45 @@ class Environment():
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+        gamebox = self.getGamebox(gray)
+
+        if (image_only):
+            return gamebox
+
         score = self.ScoreProcessor.getScore(gray)
 
         if (not done and score != -1):
             lives = self.LivesProcessor.getLives(gray)
 
-            if (lives < self.lives):
+            if (self.frame > self.FILTERSIZE and lives < self.lives.get()):
                 done = True
 
             active = True
             self.frame += 1
-            self.score = score
-            self.lives = lives
+            self.score.set(score)
+            self.lives.set(lives)
 
-        gamebox = self.getGamebox(gray)
-
-        reward = (self.frame / 10) + (self.score / 10)
+        # TODO: Make this return only reward from last process()
+        reward = (self.frame / 10) + (self.score.get() / 10)
+        reward_delta = reward - self.reward
+        self.reward = reward
 
         if self.showScreen:
             msg = ("Frame: {}\nScore: {}\n"
                    "Lives: {}\nReward: {}\nGame Over: {}").format(
-                self.frame, score, self.lives, reward, done)
+                self.frame, self.score.get(), self.lives.get(), reward, done)
             image = self.overlayText(image, msg, (5, 40), weight=4, size=1)
             # print(msg)
             cv2.imshow('frame', image)
             cv2.waitKey(1)
+        else:
+            msg = ("Frame: {}\tScore: {}\t"
+                   "Lives: {}\tReward: {}\tGame Over: {}           \r").format(
+                self.frame, self.score.get(), self.lives.get(), reward, done)
+            sys.stdout.write(msg)
+            sys.stdout.flush()
 
-        return (active, gamebox, int(reward), done)
+        return (active, gamebox, int(reward_delta), done)
 
     def close(self):
         self.cap.release()

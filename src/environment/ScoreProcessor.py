@@ -42,8 +42,8 @@ class ScoreProcessor():
         if digest in self.NUMBERS_HASH:
             return self.NUMBERS_HASH[digest]
 
-        print(type(digest), type(list(self.NUMBERS_HASH.keys())[0]))
-        print("Missing Hash", digest, score_bin)
+        # print(type(digest), type(list(self.NUMBERS_HASH.keys())[0]))
+        # print("Missing Hash", digest, score_bin)
         return -1
 
     def getScore(self, gray):
@@ -57,7 +57,6 @@ class ScoreProcessor():
         while (np.count_nonzero(score_bin)):
             digit = self.getDigitFromImageBinary(score_bin)
             if digit == -1:
-                print("digit", digit, "place", place, "score", score)
                 return -1
 
             if place == 0:

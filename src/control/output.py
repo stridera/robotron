@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import serial
-from bitstring import BitArray
 import time
 
 
@@ -11,6 +10,11 @@ class Output():
     DOWN = 2  # 1 << 1
     RIGHT = 4  # 1 << 2
     LEFT = 8  # 1 << 3
+
+    BTN_Y = 1  # 1 << 0
+    BTN_A = 2  # 1 << 1
+    BTN_B = 4  # 1 << 2
+    BTN_X = 8  # 1 << 3
 
     START = int('11000000', 2)
     BACK = int('00110000', 2)
@@ -59,30 +63,33 @@ class Output():
     def none(self):
         self.__write(0)
 
-
     def close(self):
         if self.ser is not None:
             self.ser.close()
 
-    def reset(self):
-        print("Bytes Waiting", self.ser.inWaiting())
+    def reset(self, first_time=False):
         self.start()
         time.sleep(0.1)
         self.none()
-        time.sleep(0.1)
-        self.__write(2)
-        time.sleep(0.1)
-        self.none()
-        time.sleep(0.1)
-        self.__write(2)
-        time.sleep(0.1)
-        self.none()
-        time.sleep(0.1)
-        self.__write(2)
+        time.sleep(0.3)
+        if first_time:
+            self.move(self.UP)
+            time.sleep(0.1)
+            self.none()
+            time.sleep(0.3)
+        self.__write(self.BTN_A)
         time.sleep(0.1)
         self.none()
-        time.sleep(1)
-        self.__write(2)
+        time.sleep(0.3)
+        self.__write(self.BTN_A)
+        time.sleep(0.1)
+        self.none()
+        time.sleep(0.3)
+        self.__write(self.BTN_A)
+        time.sleep(0.1)
+        self.none()
+        time.sleep(2)
+        self.__write(self.BTN_A)
         time.sleep(0.1)
         self.none()
         time.sleep(1)

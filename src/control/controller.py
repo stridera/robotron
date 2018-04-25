@@ -100,6 +100,19 @@ class Controller():
             xbox
         )
 
+    def run(self, out):
+        while True:
+            (left, right, back, start, xbox) = self.read()
+            if (xbox):
+                return
+            else:
+                if start:
+                    out.start()
+                elif back:
+                    out.back()
+                else:
+                    out.move_and_shoot(left, right)
+
 
 if __name__ == '__main__':
     c = Controller()

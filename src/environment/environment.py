@@ -9,7 +9,7 @@ from .NoiseFilter import NoiseFilter
 
 class Environment():
     GAMEBOX = [114, 309, 608, 975]
-    FILTERSIZE = 15
+    FILTERSIZE = 30
 
     def __init__(self, show=False):
         ''' constructor '''
@@ -81,7 +81,6 @@ class Environment():
 
         if (not done and score != -1):
             lives = self.LivesProcessor.getLives(gray)
-
             if (self.frame > self.FILTERSIZE and lives < self.lives.get()):
                 done = True
 
@@ -104,9 +103,9 @@ class Environment():
             cv2.imshow('frame', image)
             cv2.waitKey(1)
         else:
-            msg = ("Frame: {}\tScore: {}\t"
-                   "Lives: {}\tReward: {}\tGame Over: {}           \r").format(
-                self.frame, self.score.get(), self.lives.get(), reward, done)
+            msg = ("Frame: {}    Score: {}    Active: {}    "
+                   "Lives: {}    Reward: {}    Game Over: {}             \r").format(
+                self.frame, self.score.get(), active, self.lives.get(), reward, done)
             sys.stdout.write(msg)
             sys.stdout.flush()
 

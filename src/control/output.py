@@ -68,6 +68,8 @@ class Output():
             self.ser.close()
 
     def reset(self, first_time=False):
+        self.none()
+        time.sleep(2)
         self.start()
         time.sleep(0.1)
         self.none()

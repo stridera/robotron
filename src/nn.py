@@ -22,7 +22,7 @@ from builtins import range
 MAX_EXPERIENCES = 500000
 MIN_EXPERIENCES = 50000
 TARGET_UPDATE_PERIOD = 10000
-IM_SIZE = 80
+IM_SIZE = (121,166)
 K = 64  # 8 movement directions by 8 shooting directions
 
 
@@ -34,7 +34,7 @@ def downsample_image(A):
     # changing aspect ratio doesn't significantly distort the image
     # nearest neighbor interpolation produces a much sharper image
     # than default bilinear
-    B = imresize(B, size=(IM_SIZE, IM_SIZE), interp='nearest')
+    B = imresize(B, size=IM_SIZE, interp='nearest')
     return B
 
 
@@ -53,7 +53,7 @@ class DQN:
 
             # inputs and targets
             self.X = tf.placeholder(tf.float32, shape=(
-                None, 4, IM_SIZE, IM_SIZE), name='X')
+                None, 4, IM_SIZE[0], IM_SIZE[1]), name='X')
 
             # tensorflow convolution needs the order to be:
             # (num_samples, height, width, "color")
@@ -114,7 +114,6 @@ class DQN:
             actual = self.session.run(q)
             op = p.assign(actual)
             ops.append(op)
-
         self.session.run(ops)
 
     def set_session(self, session):

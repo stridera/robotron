@@ -18,12 +18,12 @@ from builtins import range
 MAX_EXPERIENCES = 500000
 MIN_EXPERIENCES = 50000
 TARGET_UPDATE_PERIOD = 10000
-IM_SIZE = 80
+IM_SIZE = (121,166)
 K = 64  # 8 movement directions by 8 shooting directions
 
 
 def downsample_image(img):
-    return imresize(img, size=(IM_SIZE, IM_SIZE), interp='nearest')
+    return imresize(img, size=IM_SIZE, interp='nearest')
 
 
 def update_state(state, obs):
@@ -77,7 +77,7 @@ def play_one(
     obs = reset(env, out)
     obs_small = downsample_image(obs)
     state = np.stack([obs_small] * 4, axis=0)
-    assert(state.shape == (4, 80, 80))
+    # assert(state.shape == (4, 80, 80))
     loss = None
 
     total_time_training = 0
@@ -136,7 +136,7 @@ def main():
     hidden_layer_sizes = [512]
     gamma = 0.99
     batch_sz = 32
-    num_episodes = 10000
+    num_episodes = 1000000
     total_t = 0
     experience_replay_buffer = []
     episode_rewards = np.zeros(num_episodes)
@@ -171,22 +171,32 @@ def main():
 
     saver = tf.train.Saver()
     with tf.Session() as sess:
+        model.set_session(sess)
+        target_model.set_session(sess)
+        sess.run(tf.global_variables_initializer())
+
         if False:
-            saver.restore(sess, tf.train.latest_checkpoint('./'))
-            pickle.load("replay_buffer")
+            # saver.restore(sess, './models/current.ckpt')
+            with open("./experience_replay_buffer.pickle", 'rb') as pickle_file:
+                experience_replay_buffer = pickle.load(pickle_file)
             print("Model restored.")
         else:
             print("Populating experience replay buffer...")
             obs = reset(env, out)
+            print(obs.shape)
             obs_small = downsample_image(obs)
             state = np.stack([obs_small] * 4, axis=0)
-            assert(state.shape == (4, IM_SIZE, IM_SIZE))
+            #assert(state.shape == (4, IM_SIZE, IM_SIZE))
 
             for i in range(MIN_EXPERIENCES):
-                action = np.random.choice(K)
-                (l, r) = split_action(action)
-                out.move_and_shoot(r, l)
                 (active, obs, reward, done) = env.process()
+                while not active:
+                    out.none()
+                    (active, obs, reward, done) = env.process()
+                left = np.random.choice(8)
+                right = np.random.choice(8)
+                action = left * right
+                out.move_and_shoot(left, right)
                 next_state = update_state(state, obs)
                 experience_replay_buffer.append((state, action, reward, next_state, done))
 
@@ -230,8 +240,11 @@ def main():
                   )
             sys.stdout.flush()
             if i % 100 == 0:
-                pickle.dump("replay_buffer", experience_replay_buffer)
-                saver.save(sess, 'robotron')
+                with open("./experience_replay_buffer.pickle", 'wb') as pickle_file:
+                    pickle.dump(experience_replay_buffer, pickle_file)
+                saver.save(sess, './models/current.ckpt')
+                saver.save(sess, './models/episode_{}.ckpt'.format(i))
+
                 print("Checkpoint Saved.")
 
 

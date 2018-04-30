@@ -22,7 +22,7 @@ from builtins import range
 MAX_EXPERIENCES = 500000
 MIN_EXPERIENCES = 50000
 TARGET_UPDATE_PERIOD = 10000
-IM_SIZE = (121,166)
+IM_SIZE = (80,110)
 K = 64  # 8 movement directions by 8 shooting directions
 
 

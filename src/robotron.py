@@ -18,7 +18,7 @@ from builtins import range
 MAX_EXPERIENCES = 500000
 MIN_EXPERIENCES = 50000
 TARGET_UPDATE_PERIOD = 10000
-IM_SIZE = (121,166)
+IM_SIZE = (80,110)
 K = 64  # 8 movement directions by 8 shooting directions
 
 
@@ -34,7 +34,7 @@ def update_state(state, obs):
 def split_action(a):
     left = a / 8
     right = a % 8
-    return (int(left), int(right))
+    return (int(left) + 1, int(right) + 1)
 
 
 def reset(env, out):
@@ -89,7 +89,7 @@ def play_one(
         # Update target network
         if total_t % TARGET_UPDATE_PERIOD == 0:
             target_model.copy_from(model)
-            print("Copied model parameters to target network. total_t = %s, period = %s" % (
+            print("Copied model parameters to target network. total_t = %s, period = %s              " % (
                 total_t, TARGET_UPDATE_PERIOD))
 
         # Take action
@@ -126,6 +126,7 @@ def play_one(
 
         epsilon = max(epsilon - epsilon_change, epsilon_min)
 
+    print("\n")
     return total_t, episode_reward, (datetime.now() - t0), num_steps_in_episode, \
         total_time_training / num_steps_in_episode, epsilon, loss
 
@@ -146,7 +147,7 @@ def main():
 
     # epsilon
     # decays linearly until 0.1
-    epsilon = 1.0
+    epsilon = 0.14
     epsilon_min = 0.1
     epsilon_change = (epsilon - epsilon_min) / 500000
 
@@ -175,39 +176,33 @@ def main():
         target_model.set_session(sess)
         sess.run(tf.global_variables_initializer())
 
-        if False:
-            # saver.restore(sess, './models/current.ckpt')
-            with open("./experience_replay_buffer.pickle", 'rb') as pickle_file:
-                experience_replay_buffer = pickle.load(pickle_file)
-            print("Model restored.")
-        else:
-            print("Populating experience replay buffer...")
-            obs = reset(env, out)
-            print(obs.shape)
-            obs_small = downsample_image(obs)
-            state = np.stack([obs_small] * 4, axis=0)
-            #assert(state.shape == (4, IM_SIZE, IM_SIZE))
+        saver.restore(sess, './models/current.ckpt')
+        print("Populating experience replay buffer...")
+        obs = reset(env, out)
+        print(obs.shape)
+        obs_small = downsample_image(obs)
+        state = np.stack([obs_small] * 4, axis=0)
+        #assert(state.shape == (4, IM_SIZE, IM_SIZE))
 
-            for i in range(MIN_EXPERIENCES):
+        for i in range(MIN_EXPERIENCES):
+            (active, obs, reward, done) = env.process()
+            while not active:
+                out.none()
                 (active, obs, reward, done) = env.process()
-                while not active:
-                    out.none()
-                    (active, obs, reward, done) = env.process()
-                left = np.random.choice(8)
-                right = np.random.choice(8)
-                action = left * right
-                out.move_and_shoot(left, right)
-                next_state = update_state(state, obs)
-                experience_replay_buffer.append((state, action, reward, next_state, done))
+            action = np.random.choice(8 * 8)
+            (l, r) = split_action(action)
+            out.move_and_shoot(r, l)
+            next_state = update_state(state, obs)
+            experience_replay_buffer.append((state, action, reward, next_state, done))
 
-                if done:
-                    print("\nPopulating experience replay buffer...", i, "of", MIN_EXPERIENCES)
-                    obs = reset(env, out)
-                    obs_small = downsample_image(obs)
-                    state = np.stack([obs_small] * 4, axis=0)
-                    # assert(state.shape == (4, 80, 80))
-                else:
-                    state = next_state
+            if done:
+                print("\nPopulating experience replay buffer...", i, "of", MIN_EXPERIENCES)
+                obs = reset(env, out)
+                obs_small = downsample_image(obs)
+                state = np.stack([obs_small] * 4, axis=0)
+                # assert(state.shape == (4, 80, 80))
+            else:
+                state = next_state
 
         # Play a number of episodes and learn!
         print("Beginning DQN learning")
@@ -240,8 +235,6 @@ def main():
                   )
             sys.stdout.flush()
             if i % 100 == 0:
-                with open("./experience_replay_buffer.pickle", 'wb') as pickle_file:
-                    pickle.dump(experience_replay_buffer, pickle_file)
                 saver.save(sess, './models/current.ckpt')
                 saver.save(sess, './models/episode_{}.ckpt'.format(i))
 

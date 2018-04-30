@@ -1,5 +1,6 @@
 import cv2
 import sys
+import time
 # import numpy as np
 
 from .ScoreProcessor import ScoreProcessor
@@ -9,7 +10,7 @@ from .NoiseFilter import NoiseFilter
 
 class Environment():
     GAMEBOX = [114, 309, 608, 975]
-    FILTERSIZE = 30
+    FILTERSIZE = 15
 
     def __init__(self, show=False):
         ''' constructor '''
@@ -18,6 +19,7 @@ class Environment():
 
         self.score = NoiseFilter(self.FILTERSIZE)
         self.lives = NoiseFilter(self.FILTERSIZE)
+        self.maxLives = 0
 
         self.frame = 0
         self.reward = 0
@@ -61,6 +63,9 @@ class Environment():
         return image
 
     def process(self, image_only=False):
+        # Lets slow it down so it's not doing 60fps
+        time.sleep(0.1)
+
         active = False
         done = False
 
@@ -80,14 +85,16 @@ class Environment():
         score = self.ScoreProcessor.getScore(gray)
 
         if (not done and score != -1):
-            lives = self.LivesProcessor.getLives(gray)
-            if (self.frame > self.FILTERSIZE and lives < self.lives.get()):
+            self.lives.set(self.LivesProcessor.getLives(gray))
+            if (self.frame > self.FILTERSIZE and self.lives.get() < self.maxLives):
                 done = True
+
+            if self.lives.get() > self.maxLives:
+                self.maxLives = self.lives.get()
 
             active = True
             self.frame += 1
             self.score.set(score)
-            self.lives.set(lives)
 
         # TODO: Make this return only reward from last process()
         reward = (self.frame / 10) + (self.score.get() / 10)

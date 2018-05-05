@@ -28,3 +28,13 @@ class NoiseFilter():
         if self.__size == 0:
             return 0
         return np.bincount(self.__buffer).argmax()
+
+    def reset(self):
+        self.__counter = 0
+        self.__size = 0
+        self.__buffer = []
+
+    def zero(self):
+        self.counter = 0
+        self.__size == self.__max_size
+        self.__buffer = list(np.zeros(self.__max_size))

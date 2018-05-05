@@ -1,7 +1,7 @@
 import cv2
 import sys
 import time
-# import numpy as np
+import numpy as np
 
 from .ScoreProcessor import ScoreProcessor
 from .LivesProcessor import LivesProcessor
@@ -20,9 +20,9 @@ class Environment():
         self.score = NoiseFilter(self.FILTERSIZE)
         self.lives = NoiseFilter(self.FILTERSIZE)
         self.maxLives = 0
+        self.rewards = np.array([0, 0])
 
         self.frame = 0
-        self.reward = 0
         self.showScreen = show
 
         self.cap = cv2.VideoCapture(0)
@@ -30,10 +30,10 @@ class Environment():
         self.cap.set(4, 720)
 
     def reset(self):
+        self.rewards = np.array([0, 0])
         self.frame = 0
-        self.reward = 0
-        self.score = NoiseFilter(self.FILTERSIZE)
-        self.lives = NoiseFilter(self.FILTERSIZE)
+        self.score.zero()
+        self.lives.zero()
 
     def hideScreen(self):
         self.showScreen = False
@@ -73,7 +73,7 @@ class Environment():
 
         if not ret:
             print("Nothing captured.")
-            return (False, None, 0, False)
+            return (False, None, 0, 0, False)
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -83,8 +83,8 @@ class Environment():
             return gamebox
 
         score = self.ScoreProcessor.getScore(gray)
-
-        if (not done and score != -1):
+        score_delta = 0
+        if (score != -1):
             self.lives.set(self.LivesProcessor.getLives(gray))
             if (self.frame > self.FILTERSIZE and self.lives.get() < self.maxLives):
                 done = True
@@ -94,29 +94,45 @@ class Environment():
 
             active = True
             self.frame += 1
+            score_before = self.score.get()
             self.score.set(score)
+            score_after = self.score.get()
+            score_delta = score_after - score_before
 
-        # TODO: Make this return only reward from last process()
-        reward = (self.frame / 10) + (self.score.get() / 10)
-        reward_delta = reward - self.reward
-        self.reward = reward
+        # Calculate Movement Reward
+        movement_reward = 1
+        while score_delta >= 1000:
+            # Assume we collected a civilian - humans are worth an increasing point value.
+            # The first human scores 1000 points, the second is worth 2000 points and so
+            # on until the point value reaches 5000. The point value will remain at 5000
+            # for all the remaining humans in the same wave. When the wave is completed or
+            # you have been killed, the points awarded for saving another human will be
+            # reset to 1000. For our purpose, we'll just give it a boost of 10.
+            movement_reward += 100
+            while score_delta >= 1000:
+                score_delta -= 1000
+
+        score_delta = int(score_delta / 10)
+        self.rewards += [movement_reward, score_delta]
 
         if self.showScreen:
-            msg = ("Frame: {}\nScore: {}\n"
-                   "Lives: {}\nReward: {}\nGame Over: {}").format(
-                self.frame, self.score.get(), self.lives.get(), reward, done)
+            msg = ("Frame: {}\nScore: {}\nLives: {}\n"
+                   "Movement Reward: {}\nShooting Reward: {}\nGame Over: {}").format(
+                self.frame, self.score.get(), self.lives.get(),
+                self.rewards[0], self.rewards[1], done)
             image = self.overlayText(image, msg, (5, 40), weight=4, size=1)
             # print(msg)
             cv2.imshow('frame', image)
             cv2.waitKey(1)
         else:
-            msg = ("Frame: {}    Score: {}    Active: {}    "
-                   "Lives: {}    Reward: {}    Game Over: {}             \r").format(
-                self.frame, self.score.get(), active, self.lives.get(), reward, done)
+            msg = ("Frame: {}    Score: {}    Active: {}    Lives: {}    "
+                   "Movement Reward: {}    Shooting Reward: {}    Game Over: {}             \r").format(
+                self.frame, self.score.get(), active, self.lives.get(),
+                self.rewards[0], self.rewards[1], done)
             sys.stdout.write(msg)
             sys.stdout.flush()
 
-        return (active, gamebox, int(reward_delta), done)
+        return (active, gamebox, movement_reward, score_delta, done)
 
     def close(self):
         self.cap.release()

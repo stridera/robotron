@@ -1,0 +1,12 @@
+nothing 0
+player 1
+civilian 2
+grunt 3
+hulk 4
+sphereoid 5
+enforcer 6
+brain 7
+tank 8
+quark 9
+electrode 10
+bullet 11

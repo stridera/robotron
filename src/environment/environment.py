@@ -3,19 +3,23 @@ import sys
 import time
 import numpy as np
 
-from .ScoreProcessor import ScoreProcessor
-from .LivesProcessor import LivesProcessor
-from .NoiseFilter import NoiseFilter
+from .tracker import Tracker
+from .score_processor import ScoreProcessor
+from .lives_processor import LivesProcessor
+from .noise_filter import NoiseFilter
 
 
 class Environment():
     GAMEBOX = [114, 309, 608, 975]
-    FILTERSIZE = 15
+    IMAGE_SIZE = (720, 1280)
+    BOARD_SIZE = (493, 666)
+    FILTERSIZE = 7
 
-    def __init__(self, show=False):
+    def __init__(self):
         ''' constructor '''
-        self.ScoreProcessor = ScoreProcessor()
-        self.LivesProcessor = LivesProcessor()
+        self.tracker = Tracker(self.IMAGE_SIZE, self.BOARD_SIZE)
+        self.scoreProcessor = ScoreProcessor()
+        self.livesProcessor = LivesProcessor()
 
         self.score = NoiseFilter(self.FILTERSIZE)
         self.lives = NoiseFilter(self.FILTERSIZE)
@@ -23,37 +27,19 @@ class Environment():
         self.rewards = np.array([0, 0])
 
         self.frame = 0
-        self.showScreen = show
-
-        self.cap = cv2.VideoCapture(0)
-        self.cap.set(3, 1280)
-        self.cap.set(4, 720)
 
     def reset(self):
+        self.tracker.reset()
         self.rewards = np.array([0, 0])
         self.frame = 0
         self.score.zero()
         self.lives.zero()
 
-    def hideScreen(self):
-        self.showScreen = False
-
-    def showScreen(self):
-        self.showScreen = True
-
     def getGamebox(self, image):
         (x, y, x1, y1) = self.GAMEBOX
         return image[x:x1, y:y1]
 
-    def overlayText(
-        self,
-        image,
-        text,
-        location,
-        size=3,
-        weight=8,
-        color=(255, 255, 255)
-    ):
+    def overlayText(self, image, text, location, size=3, weight=8, color=(255, 255, 255)):
         font = cv2.FONT_HERSHEY_SIMPLEX
         (x, y0) = location
         dy = 40
@@ -62,30 +48,20 @@ class Environment():
             cv2.putText(image, line, (x, y), font, size, color, weight)
         return image
 
-    def process(self, image_only=False):
-        # Lets slow it down so it's not doing 60fps
-        time.sleep(0.1)
-
+    def process(self, image):
         active = False
         done = False
 
-        ret, image = self.cap.read()
-
-        if not ret:
-            print("Nothing captured.")
-            return (False, None, 0, 0, False)
-
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
         gamebox = self.getGamebox(gray)
-
-        if (image_only):
-            return gamebox
-
-        score = self.ScoreProcessor.getScore(gray)
+        score = self.scoreProcessor.getScore(gray)
         score_delta = 0
+        sprites = []
+        sprite_map_image = None
+        player_distances = []
+
         if (score != -1):
-            self.lives.set(self.LivesProcessor.getLives(gray))
+            self.lives.set(self.livesProcessor.getLives(gray))
             if (self.frame > self.FILTERSIZE and self.lives.get() < self.maxLives):
                 done = True
 
@@ -98,6 +74,8 @@ class Environment():
             self.score.set(score)
             score_after = self.score.get()
             score_delta = score_after - score_before
+
+            sprites, sprite_map_image = self.tracker.update(gamebox)
 
         # Calculate Movement Reward
         movement_reward = 1
@@ -115,26 +93,22 @@ class Environment():
         score_delta = int(score_delta / 10)
         self.rewards += [movement_reward, score_delta]
 
-        if self.showScreen:
-            msg = ("Frame: {}\nScore: {}\nLives: {}\n"
-                   "Movement Reward: {}\nShooting Reward: {}\nGame Over: {}").format(
-                self.frame, self.score.get(), self.lives.get(),
-                self.rewards[0], self.rewards[1], done)
-            image = self.overlayText(image, msg, (5, 40), weight=4, size=1)
-            # print(msg)
-            cv2.imshow('frame', image)
-            cv2.waitKey(1)
-        else:
-            msg = ("Frame: {}    Score: {}    Active: {}    Lives: {}    "
-                   "Movement Reward: {}    Shooting Reward: {}    Game Over: {}             \r").format(
-                self.frame, self.score.get(), active, self.lives.get(),
-                self.rewards[0], self.rewards[1], done)
-            sys.stdout.write(msg)
-            sys.stdout.flush()
+        data = {
+            'frame': self.frame,
+            'score': self.score.get(),
+            'lives': self.lives.get(),
+            # 'level': self.level,
+            'movement_reward': self.rewards[0],
+            'shooting_reward': self.rewards[1],
+            'active': active,
+            'game_over': done,
+            'sprites': sprites,
+        }
 
-        return (active, gamebox, movement_reward, score_delta, done)
+        # msg = ("Frame: {}    Score: {}    Active: {}    Lives: {}    "
+        #        "Movement Reward: {}    Shooting Reward: {}    Game Over: {}             \r").format(
+        #            self.frame, self.score.get(), active, self.lives.get(), self.rewards[0], self.rewards[1], done)
+        # sys.stdout.write(msg)
+        # sys.stdout.flush()
 
-    def close(self):
-        self.cap.release()
-        if self.showScreen:
-            cv2.destroyAllWindows()
+        return data, sprite_map_image

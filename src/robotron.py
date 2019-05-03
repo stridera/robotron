@@ -1,294 +1,227 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import environment
 import control
-from nn import DQN
-
-import warnings
-import sys
-import random
+import cv2
 import numpy as np
-from datetime import datetime
-from builtins import range
-
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=FutureWarning)
-    from scipy.misc import imresize
-    import tensorflow as tf
+import time
+from statistics import mean, median
+import math
 
 
-MAX_EXPERIENCES = 10000
-MIN_EXPERIENCES = 1000
-# MAX_EXPERIENCES = 500000
-# MIN_EXPERIENCES = 50000
-TARGET_UPDATE_PERIOD = 10000
-IM_SIZE = (80, 110)
-K = 8  # 8 movement directions by 8 shooting directions
+class Robotron:
+    WINDOW_NAME = "Robotron"
+    FONT = cv2.FONT_HERSHEY_SIMPLEX
 
+    def __init__(self, device=2):
+        self.controller = control.Controller()
+        self.output = control.Output()
+        self.env = environment.Environment()
+        self.cap = cv2.VideoCapture(device)
+        self.cap.set(3, 1280)
+        self.cap.set(4, 720)
 
-def downsample_image(img):
-    return imresize(img, size=IM_SIZE, interp='nearest')
+        self.running = False
+        self.profData = {
+            'all': [0]
+        }
+        self.maxProf = 100
 
+        self.arrows = []
 
-def update_state(state, obs):
-    obs_small = downsample_image(obs)
-    return np.append(state[1:], np.expand_dims(obs_small, 0), axis=0)
+        cv2.namedWindow(self.WINDOW_NAME)
 
+    def __del__(self):
+        if self.output:
+            self.output.close()
 
-def split_action(a):
-    left = a / 8
-    right = a % 8
-    return (int(left) + 1, int(right) + 1)
+        if self.cap:
+            self.cap.release()
 
+        print("Killing all windows.")
+        cv2.destroyAllWindows()
 
-def reset(env, out):
-    env.reset()
-    out.reset()
-    return env.process(True)
+    def addProfData(self, name, delta):
+        self.profData[name].append(delta)
+        if len(self.profData[name]) > self.maxProf:
+            self.profData[name] = self.profData[name][-self.maxProf:]
 
+    def reset(self):
+        """ Reset the game from an already running game. """
+        # self.output.reset()
+        self.env.reset()
+        self.running = False
 
-def learn(model, target_model, state_buffer, experience_replay_buffer, gamma, batch_size):
-    # Sample experiences
-    replay_buffer = list(np.concatenate((state_buffer, experience_replay_buffer), axis=1))
-    samples = random.sample(replay_buffer, batch_size)
-    states, next_states, dones, actions, rewards = map(np.array, zip(*samples))
+    def handleInput(self, key):
+        if not self.running:
+            self.output.none()
 
-    # Calculate targets
-    next_Qs = target_model.predict(next_states)
-    next_Q = np.amax(next_Qs, axis=1)
-    targets = rewards + np.invert(dones).astype(np.float32) * gamma * next_Q
+        if key == -1:
+            return
+        elif key == ord('`'):
+            self.running = not self.running
+        elif key == ord('Q'):
+            exit(1)
+        elif key == ord('e'):
+            self.output.start()
+        elif key == ord('q'):
+            self.output.back()
+        elif self.controller.attached() and key == ord('c'):
+            self.controller.run()
+        else:
+            move_key = {
+                ord('w'): 1,
+                ord('d'): 3,
+                ord('s'): 5,
+                ord('a'): 7
+            }
 
-    # Update model
-    loss = model.update(states, actions, targets)
-    return loss
+            shoot_key = {
+                ord('i'): 1,
+                ord('l'): 3,
+                ord('k'): 5,
+                ord('j'): 7
+            }
 
+            move = move_key.get(key, 0)
+            shoot = shoot_key.get(key, 0)
+            if move or shoot:
+                self.output.move_and_shoot(move, shoot)
 
-def play_one(
-        env,
-        out,
-        total_t,
-        state_replay_buffer,
-        movement_replay_buffer,
-        shooting_replay_buffer,
-        movement_model,
-        movement_target_model,
-        shooting_model,
-        shooting_target_model,
-        gamma,
-        batch_size,
-        epsilon,
-        epsilon_change,
-        epsilon_min):
+    def midpoint(self, p1, p2):
+        (x1, y1) = p1
+        (x2, y2) = p2
+        return ((x1+x2)//2, (y1+y2)//2)
 
-    t0 = datetime.now()
+    def showScreen(self, image, spriteGrid=None, data=None):
+        """ Show the screen and data """
+        if spriteGrid is not None and data is not None:
 
-    # Reset the environment
-    obs = reset(env, out)
-    obs_small = downsample_image(obs)
-    state = np.stack([obs_small] * 4, axis=0)
-    # assert(state.shape == (4, 80, 80))
+            for i, (p1, p2, name) in enumerate(self.arrows):
+                if p2 is not None:
+                    color = (0, 255, 0) if i == 0 else (0, 0, 255)
+                    cv2.arrowedLine(spriteGrid, p1, p2, color, 1)
+                    t = "{}".format(name)
+                    cv2.putText(spriteGrid, t, self.midpoint(p1, p2), self.FONT, 0.6, color, 1, cv2.LINE_AA)
 
-    total_time_training = 0
-    num_steps_in_episode = 0
-    episode_movement_reward = 0
-    episode_shooting_reward = 0
+            ih, _, _ = image.shape
+            sgh, w, _ = spriteGrid.shape
 
-    done = False
-    while not done:
-        # Update target network
-        if total_t % TARGET_UPDATE_PERIOD == 0:
-            movement_target_model.copy_from(movement_model)
-            shooting_target_model.copy_from(shooting_model)
-            print("Copied model parameters to target network. total_t = %s, period = %s              " % (
-                total_t, TARGET_UPDATE_PERIOD))
+            dataPanel = np.zeros((ih - sgh, w, 3), dtype=np.uint8)
+            datastr = [
+                "Score: {}".format(data['score']),
+                "Lives: {}".format(data['lives']),
+                "Active: {}".format(data['active']),
+                "Playing: {}".format(self.running),
+                "Times: Max: {:.4f}  Average: {:.4f}".format(max(self.profData['all']), mean(self.profData['all']))
+            ]
 
-        # Take action
-        move = movement_model.sample_action(state, epsilon)
-        shoot = shooting_model.sample_action(state, epsilon)
-        out.move_and_shoot(move + 1, shoot + 1)
-        (active, obs, movement_reward, shooting_reward, done) = env.process()
+            for i, line in enumerate(datastr):
+                cv2.putText(dataPanel, line, (15, (30 * i) + 30), self.FONT, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
-        obs_small = downsample_image(obs)
-        next_state = np.append(state[1:], np.expand_dims(obs_small, 0), axis=0)
-        # assert(state.shape == (4, 80, 80))
+            sidePanel = np.vstack((spriteGrid, dataPanel))
+            image = np.hstack((sidePanel, image))
 
-        episode_movement_reward += movement_reward
-        episode_shooting_reward += shooting_reward
+        cv2.imshow(self.WINDOW_NAME, image)
+        return cv2.waitKey(1)
 
-        # Remove oldest experience if replay buffer is full
-        if len(state_replay_buffer) == MAX_EXPERIENCES:
-            state_replay_buffer.pop(0)
-            movement_replay_buffer.pop(0)
-            shooting_replay_buffer.pop(0)
+    def getDirection(self, x1, y1, x2, y2):
+        deltaX = x2 - x1
+        deltaY = y2 - y1
 
-        # Save the latest experience
-        state_replay_buffer.append((state, next_state, done))
-        movement_replay_buffer.append((move, episode_movement_reward))
-        shooting_replay_buffer.append((shoot, episode_shooting_reward))
+        degrees_temp = (math.atan2(deltaY, deltaX)/math.pi*180)+22
+        if degrees_temp < 0:
+            degrees_final = 360 + degrees_temp
+        else:
+            degrees_final = degrees_temp
 
-        # Train the model, keep track of time
-        t0_2 = datetime.now()
-        move_loss = learn(movement_model, movement_target_model, state_replay_buffer,
-                          movement_replay_buffer, gamma, batch_size)
-        shoot_loss = learn(shooting_model, shooting_target_model, state_replay_buffer,
-                           shooting_replay_buffer, gamma, batch_size)
+        point = round(degrees_final / 45) + 2
+        if point > 8:
+            point -= 8
 
-        dt = datetime.now() - t0_2
+        return point
 
-        total_time_training += dt.total_seconds()
-        num_steps_in_episode += 1
+    def play(self, data):
+        active = data['active']
+        lives = data['lives']
 
-        state = next_state
-        total_t += 1
+        if active:
+            sprites = data['sprites']
 
-        epsilon = max(epsilon - epsilon_change, epsilon_min)
+            if sprites is None:
+                return
 
-    return total_t, episode_movement_reward, episode_shooting_reward, (datetime.now() - t0), num_steps_in_episode, \
-        total_time_training / num_steps_in_episode, epsilon, (move_loss, shoot_loss)
+            # Shoot at closest enemy, move toward closest civilian
+            closest_enemy = None
+            closest_civ = None
 
+            _, _, px, py = sprites[0]
 
-def main():
-    # hyperparams and initialize stuff
-    conv_layer_sizes = [(32, 8, 4), (64, 4, 2), (64, 3, 1)]
-    hidden_layer_sizes = [512]
-    gamma = 0.99
-    batch_sz = 32
-    num_episodes = 1000000
-    total_t = 0
-    state_replay_buffer = []
-    movement_replay_buffer = []
-    shooting_replay_buffer = []
-    movement_episode_rewards = np.zeros(num_episodes)
-    shooting_episode_rewards = np.zeros(num_episodes)
-    c_in = control.Controller()
-    out = control.Output()
-    env = environment.Environment()
+            sorted_sprites = sorted(sprites)
+            for d, r, x, y in sorted_sprites:
+                if d == 0:
+                    continue
+                if r == 'c' and closest_civ is None:
+                    closest_civ = (x, y)
+                elif closest_enemy is None:
+                    closest_enemy = (x, y)
 
-    # epsilon
-    # decays linearly until 0.1
-    epsilon = 1
-    epsilon_min = 0.1
-    epsilon_change = (epsilon - epsilon_min) / 500000
+                if closest_civ is not None and closest_enemy is not None:
+                    break
 
-    # Create models
-    movement_model = DQN(
-        K=K,
-        conv_layer_sizes=conv_layer_sizes,
-        hidden_layer_sizes=hidden_layer_sizes,
-        gamma=gamma,
-        scope="movement_model")
-    movement_target_model = DQN(
-        K=K,
-        conv_layer_sizes=conv_layer_sizes,
-        hidden_layer_sizes=hidden_layer_sizes,
-        gamma=gamma,
-        scope="movement_target_model"
-    )
-
-    shooting_model = DQN(
-        K=K,
-        conv_layer_sizes=conv_layer_sizes,
-        hidden_layer_sizes=hidden_layer_sizes,
-        gamma=gamma,
-        scope="shooting_model")
-    shooting_target_model = DQN(
-        K=K,
-        conv_layer_sizes=conv_layer_sizes,
-        hidden_layer_sizes=hidden_layer_sizes,
-        gamma=gamma,
-        scope="target_model"
-    )
-
-    # Use controller input to get into the game
-    print("Using Controller Input to control game... press the XBox button to continue.")
-    # c_in.run(out)
-
-    saver = tf.train.Saver()
-    with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
-        movement_model.set_session(sess)
-        movement_target_model.set_session(sess)
-        shooting_model.set_session(sess)
-        shooting_target_model.set_session(sess)
-
-        # saver.restore(sess, './models/current.ckpt')
-        print("Populating experience replay buffer...")
-        obs = reset(env, out)
-        obs_small = downsample_image(obs)
-        state = np.stack([obs_small] * 4, axis=0)
-        # assert(state.shape == (4, IM_SIZE, IM_SIZE))
-
-        for i in range(MIN_EXPERIENCES):
-            (active, obs, movement_reward, shooting_reward, done) = env.process()
-            while not active:
-                out.none()
-                (active, obs, movement_reward, shooting_reward, done) = env.process()
-            move = np.random.choice(8)
-            shoot = np.random.choice(8)
-            out.move_and_shoot(move + 1, shoot + 1)
-            next_state = update_state(state, obs)
-
-            # Save the latest experience
-            state_replay_buffer.append((state, next_state, done))
-            movement_replay_buffer.append((move, movement_reward))
-            shooting_replay_buffer.append((shoot, shooting_reward))
-
-            if done:
-                print("\nPopulating experience replay buffer...", i, "of", MIN_EXPERIENCES)
-                obs = reset(env, out)
-                obs_small = downsample_image(obs)
-                state = np.stack([obs_small] * 4, axis=0)
-                # assert(state.shape == (4, 80, 80))
+            if closest_enemy is None:
+                shoot = 0
             else:
-                state = next_state
+                shoot = self.getDirection(px, py, *closest_enemy)
 
-        # Play a number of episodes and learn!
-        print("\nBeginning DQN learning")
-        for i in range(num_episodes):
+            if closest_civ is None:
+                move = shoot + 4
+                if move > 8:
+                    move -= 8
+            else:
+                move = self.getDirection(px, py, *closest_civ)
 
-            (total_t, movement_reward, shooting_reward, duration,
-             num_steps_in_episode, time_per_step, epsilon, loss) = play_one(
-                env,
-                out,
-                total_t,
-                state_replay_buffer,
-                movement_replay_buffer,
-                shooting_replay_buffer,
-                movement_model,
-                movement_target_model,
-                shooting_model,
-                shooting_target_model,
-                gamma,
-                batch_sz,
-                epsilon,
-                epsilon_change,
-                epsilon_min,
-            )
-            movement_episode_rewards[i] = movement_reward
-            shooting_episode_rewards[i] = shooting_reward
+            self.arrows = []
+            self.arrows.append(((px, py), closest_civ, move))
+            self.arrows.append(((px, py), closest_enemy, shoot))
 
-            last_100_move_avg = movement_episode_rewards[max(0, i - 100):i + 1].mean()
-            last_100_shoot_avg = shooting_episode_rewards[max(0, i - 100):i + 1].mean()
-            (move_loss, shoot_loss) = loss
-            print("Episode:", i,
-                  "Duration:", duration,
-                  "Num steps:", num_steps_in_episode,
-                  "Movement Reward:", movement_reward,
-                  "Shooting Reward:", shooting_reward,
-                  "Training time per step:", "%.3f" % time_per_step,
-                  "Avg Movement Reward (Last 100):", "%.3f" % last_100_move_avg,
-                  "Avg Shooting Reward (Last 100):", "%.3f" % last_100_shoot_avg,
-                  "Epsilon:", "%.3f" % epsilon,
-                  "Move Loss:", "%.3f" % move_loss,
-                  "Shooting Loss:", "%.3f" % shoot_loss
-                  )
-            sys.stdout.flush()
-            if i > 0 and i % 100 == 0:
-                saver.save(sess, './models/current.ckpt')
-                saver.save(sess, './models/episode_{}.ckpt'.format(i))
+            print('blah', (px, py), closest_enemy, closest_civ, move, shoot)
+            self.output.move_and_shoot(move, shoot)
 
-                print("Checkpoint Saved.")
+    def run(self):
+        try:
+            while self.cap and self.cap.isOpened():
+                start = time.time()
+                status, image = self.cap.read()
+
+                if not status:
+                    print("No image received.")
+                    continue
+
+                data, spriteGrid = self.env.process(image)
+
+                if self.running:
+                    self.play(data)
+                else:
+                    self.reset()
+
+                try:
+                    window = cv2.getWindowProperty('Robotron', 0)
+                    if window < 0:
+                        exit(1)
+                except Exception:
+                    exit(1)
+
+                resp = self.showScreen(image, spriteGrid, data)
+                self.handleInput(resp)
+                end = time.time()
+                self.addProfData('all', end - start)
+
+        except KeyboardInterrupt:
+            print("Interrupt detected.  Exiting...")
 
 
 if __name__ == '__main__':
-    main()
+    r = Robotron()#'/home/strider/Code/robotron/resources/video/robotron-1.mp4')
+    r.run()

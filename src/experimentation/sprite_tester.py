@@ -53,7 +53,7 @@ class SpriteTester:
                 y += rowheight + 10
                 rowheight = 0
             sprite = spriteSheet[y:y+h, x:x+w]
-            sprites[name] = sprite[:,:,::-1]
+            sprites[name] = sprite[:, :, ::-1]
             spriteClasses[name] = c
             x += w + 10
             if h > rowheight:
@@ -80,6 +80,9 @@ class SpriteTester:
     def getHashes(self):
         return self.spriteNames, self.hashes
 
+    def getClass(self, name):
+        return self.spriteClasses[name]
+
     def testSprite(self, img):
         sprite = self.hasher(img)
         results = []
@@ -94,13 +97,13 @@ class SpriteTester:
         results = []
         typeResults = {}
         fullResults = []
-        for dirClassName in os.listdir(self.path + 'sprites/'):
+        for dirClassName in os.listdir(self.path + 'test/'):
             typeResults[dirClassName] = []
             dirClass = self.classes.index(dirClassName)
             if not dirClass:
                 print("Class {} not found!".format(type))
                 continue
-            subpath = "{}/sprites/{}/".format(self.path, dirClassName)
+            subpath = "{}/test/{}/".format(self.path, dirClassName)
             for testImageName in os.listdir(subpath):
                 img = cv2.imread(subpath + testImageName)
                 guess = self.testSprite(img)
@@ -108,9 +111,16 @@ class SpriteTester:
                 success = 1 if int(guess[0][1]) == int(dirClass) else 0
                 results.append(success)
                 typeResults[dirClassName].append(success)
+
+        if len(results) == 0:
+            return 0
+
         resultPercentage = 100 * (np.count_nonzero(results) / len(results))
         typeResultsPercentage = {}
         for k in typeResults.keys():
-            typeResultsPercentage[k] = 100 * (np.count_nonzero(typeResults[k]) / len(typeResults[k]))
+            if len(typeResults[k]) == 0:
+                typeResultsPercentage[k]
+            else:
+                typeResultsPercentage[k] = 100 * (np.count_nonzero(typeResults[k]) / len(typeResults[k]))
 
         return (resultPercentage, typeResultsPercentage, fullResults)

@@ -71,22 +71,22 @@ void handleInput(byte b)
 {
 //    b2s(b);
 
-//    Serial.print("buttons: ");
+    //Serial.print("buttons: ");
 
     switch(b) {
         case 0:
             turnAllOff();
-//            Serial.println("All off");
+            //Serial.println("All off");
             break;
         case startMask:
             turnAllOff();
             digitalWrite(startButton, HIGH);
-//            Serial.println("Start");
+            //Serial.println("Start");
             break;
         case backMask:
             turnAllOff();
             digitalWrite(backButton, HIGH);
-//            Serial.println("Back");
+            //Serial.println("Back");
             break;
         default:  
             turnOn(b);
@@ -99,13 +99,13 @@ void turnOn(byte b)
     for(int i = 0; i < button_length; i++) {
        if ((1 << i) & b) {
             digitalWrite(myPins[i], HIGH);
-//            Serial.print(buttonNames[i]);
-//            Serial.print(" ");
+            //Serial.print(buttonNames[i]);
+            //Serial.print(" ");
        } else {
             digitalWrite(myPins[i], LOW);
        }
     }
-//    Serial.println();
+    //Serial.println();
 }
 
 void turnAllOff()

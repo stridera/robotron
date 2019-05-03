@@ -21,6 +21,9 @@ class Output():
 
     def __init__(self):
         self.ser = serial.Serial('/dev/ttyACM0')
+        if not self.ser:
+            raise("Unable to connect to arduino")
+
         self.dir = [
             0,
             self.UP,
@@ -32,8 +35,9 @@ class Output():
             self.LEFT,
             self.UP | self.LEFT
         ]
-        if not self.ser:
-            raise("Unable to connect to arduino")
+
+    def __read(self):
+        print('READ:', self.ser.readline())
 
     def __write(self, val):
         self.ser.write(val.to_bytes(1, byteorder='big'))

@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import pygame
-import time
 
 
 class Controller():
@@ -24,7 +23,6 @@ class Controller():
         pygame.joystick.init()
         self.has_joystick = False
 
-        print("Joysticks:", pygame.joystick.get_count())
         if pygame.joystick.get_count() > 0:
             self.joystick = pygame.joystick.Joystick(0)
 
@@ -35,6 +33,7 @@ class Controller():
     def __bin_to_cardinal(self, b):
         if b == 0:
             return 0
+
         if b == self.UP:
             return 1
         if b == self.UP | self.RIGHT:
@@ -58,7 +57,6 @@ class Controller():
         if not self.has_joystick:
             raise Exception('Joystick not attached.')
 
-        # time.sleep(0.1)
         pygame.event.pump()
 
         start = self.joystick.get_button(self.STARTBUTTON)
@@ -68,13 +66,13 @@ class Controller():
         axis1 = self.joystick.get_axis(self.LEFTRIGHTAXIS)
 
         left = 0
-        if axis0 > 0:
+        if axis0 > 0.5:
             left |= self.DOWN
-        if axis0 < 0:
+        if axis0 < -0.5:
             left |= self.UP
-        if axis1 > 0:
+        if axis1 > 0.5:
             left |= self.RIGHT
-        if axis1 < 0:
+        if axis1 < -0.5:
             left |= self.LEFT
 
         a = self.joystick.get_button(self.ABUTTON)
@@ -112,6 +110,9 @@ class Controller():
                     out.back()
                 else:
                     out.move_and_shoot(left, right)
+
+    def attached(self):
+        return self.has_joystick
 
 
 if __name__ == '__main__':

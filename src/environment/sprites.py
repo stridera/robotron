@@ -1,4 +1,5 @@
 from enum import Enum
+from .noise_filter import NoiseFilter
 import math
 
 
@@ -16,6 +17,9 @@ class SpriteTypes(Enum):
     ELECTRODE = 10
     BULLET = 11
 
+    def __int__(self):
+        return self.value
+
     def __str__(self):
         reps = ['u', 'p', 'c', 'g', 'h', 's', 'e', 'b', 't', 'q', 'x', 'z']
         return reps[self.value]
@@ -31,12 +35,13 @@ class Sprite:
         self.vx = 0
         self.vy = 0
         self.bearing = 0
-        self.spriteClass = SpriteTypes(type)
         self.certainty = 0
         self.lastSeen = 0
+        self.spriteClass = NoiseFilter(1, type)
 
     def getRepresentation(self):
-        return str(self.spriteClass).upper() if self.certainty else str(self.spriteClass)
+        spriteClass = SpriteTypes(self.spriteClass.get())
+        return str(spriteClass).upper() if self.certainty else str(spriteClass)
 
     def getCenterXY(self):
         return (int(self.x + (self.w / 2.0)), int(self.y + (self.h / 2.0)))
@@ -52,7 +57,7 @@ class Sprite:
         self.h = h
 
         if c != 0:
-            self.spriteClass = SpriteTypes(c)
+            self.spriteClass.set(c)
         self.certainty = (self.certainty + certainty) / 2
 
     def isMatch(self, x, y, w, h):

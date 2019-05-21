@@ -58,7 +58,6 @@ class Environment():
         score_delta = 0
         sprites = []
         sprite_map_image = None
-        player_distances = []
 
         if (score != -1):
             self.lives.set(self.livesProcessor.getLives(gray))

@@ -83,7 +83,7 @@ class Tracker:
                     bestScore = score
                     bestClass = i
 
-        return bestClass, bestScore
+        return bestClass, bestScore, sHash
 
     def getSprites(self):
         return self.sprites
@@ -180,12 +180,12 @@ class Tracker:
         '''
         if len(self.sprites) <= 1:
             for rect in newSpriteRects:
-                sprite_class, _ = self.match(self.crop(thresh, *rect))
+                sprite_class, _, _ = self.match(self.crop(thresh, *rect))
                 self.addSprite(*rect, sprite_class)
             return self.getLocations(), self.getGridImage()
 
         '''
-        If we're here, we need to look at all existing objects and see if we can link them with new detections
+        If we're here, we need to look at all existing objects and see if we can link them with new detectBions
         New Plan:
          - Add everything if empty
          - Step through each existing sprite and see if there is a corrisponding sprite in the new
@@ -248,9 +248,10 @@ class Tracker:
                 certainty = 0
                 (x, y, w, h) = newSpriteRects[newSpriteArg]
                 spriteClass = oldSprite.spriteClass
-                spriteGuess, guessScore = self.match(self.crop(thresh, *newSpriteRects[newSpriteArg]))
+                spriteGuess, guessScore, sHash = self.match(self.crop(thresh, *newSpriteRects[newSpriteArg]))
 
-                if oldSprite.isMatch(*newSpriteRects[newSpriteArg]):
+
+                if True: # oldSprite.isMatch(*newSpriteRects[newSpriteArg]):
                     if newSpriteArg in usedNewSprites:
                         ''' We've already seen this sprite.  '''
                         continue
@@ -270,8 +271,8 @@ class Tracker:
                     usedOldSprites.add(oldSpriteArg)
                     usedNewSprites.add(newSpriteArg)
 
-                    if spriteGuess == SpriteTypes.UNKNOWN:
-                        c = self.crop(thresh, *newSpriteRects[newSpriteArg])
+                    if spriteGuess == 0:
+                        c = self.crop(image, *newSpriteRects[newSpriteArg])
                         hsh = self.imghash(c)
                         cv2.imwrite('/home/strider/Code/robotron/resources/test/{}-{}.jpg'.format(hsh, guessScore), c)
 

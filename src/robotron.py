@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import environment
-import control
 import cv2
 import numpy as np
 import time
 from statistics import mean, median
-import math
+
+import ai
+import control
+import environment
 
 
 class Robotron:
@@ -15,18 +16,22 @@ class Robotron:
     FONT = cv2.FONT_HERSHEY_SIMPLEX
 
     def __init__(self, device=2):
-        self.controller = control.Controller()
+        self.ai = ai.AlgorithmicControl()
+        # self.ai = ai.RandomControl()
+        self.controller = None #control.Controller()
         self.output = control.Output()
         self.env = environment.Environment()
         self.cap = cv2.VideoCapture(device)
         self.cap.set(3, 1280)
         self.cap.set(4, 720)
 
+        self.lives = 0
         self.running = False
         self.profData = {
             'all': [0]
         }
         self.maxProf = 100
+        self.lastActive = 0
 
         self.arrows = []
 
@@ -51,7 +56,7 @@ class Robotron:
         """ Reset the game from an already running game. """
         # self.output.reset()
         self.env.reset()
-        self.running = False
+        self.ai.reset()
 
     def handleInput(self, key):
         if not self.running:
@@ -67,8 +72,8 @@ class Robotron:
             self.output.start()
         elif key == ord('q'):
             self.output.back()
-        elif self.controller.attached() and key == ord('c'):
-            self.controller.run()
+        # elif self.controller is not None and self.controller.attached() and key == ord('c'):
+        #     self.controller.run()
         else:
             move_key = {
                 ord('w'): 1,
@@ -97,7 +102,6 @@ class Robotron:
     def showScreen(self, image, spriteGrid=None, data=None):
         """ Show the screen and data """
         if spriteGrid is not None and data is not None:
-
             for i, (p1, p2, name) in enumerate(self.arrows):
                 if p2 is not None:
                     color = (0, 255, 0) if i == 0 else (0, 0, 255)
@@ -110,6 +114,7 @@ class Robotron:
 
             dataPanel = np.zeros((ih - sgh, w, 3), dtype=np.uint8)
             datastr = [
+                "Method: {}".format(self.ai.desc()),
                 "Score: {}".format(data['score']),
                 "Lives: {}".format(data['lives']),
                 "Active: {}".format(data['active']),
@@ -126,69 +131,6 @@ class Robotron:
         cv2.imshow(self.WINDOW_NAME, image)
         return cv2.waitKey(1)
 
-    def getDirection(self, x1, y1, x2, y2):
-        deltaX = x2 - x1
-        deltaY = y2 - y1
-
-        degrees_temp = (math.atan2(deltaY, deltaX)/math.pi*180)+22
-        if degrees_temp < 0:
-            degrees_final = 360 + degrees_temp
-        else:
-            degrees_final = degrees_temp
-
-        point = round(degrees_final / 45) + 2
-        if point > 8:
-            point -= 8
-
-        return point
-
-    def play(self, data):
-        active = data['active']
-        lives = data['lives']
-
-        if active:
-            sprites = data['sprites']
-
-            if sprites is None:
-                return
-
-            # Shoot at closest enemy, move toward closest civilian
-            closest_enemy = None
-            closest_civ = None
-
-            _, _, px, py = sprites[0]
-
-            sorted_sprites = sorted(sprites)
-            for d, r, x, y in sorted_sprites:
-                if d == 0:
-                    continue
-                if r == 'c' and closest_civ is None:
-                    closest_civ = (x, y)
-                elif closest_enemy is None:
-                    closest_enemy = (x, y)
-
-                if closest_civ is not None and closest_enemy is not None:
-                    break
-
-            if closest_enemy is None:
-                shoot = 0
-            else:
-                shoot = self.getDirection(px, py, *closest_enemy)
-
-            if closest_civ is None:
-                move = shoot + 4
-                if move > 8:
-                    move -= 8
-            else:
-                move = self.getDirection(px, py, *closest_civ)
-
-            self.arrows = []
-            self.arrows.append(((px, py), closest_civ, move))
-            self.arrows.append(((px, py), closest_enemy, shoot))
-
-            print('blah', (px, py), closest_enemy, closest_civ, move, shoot)
-            self.output.move_and_shoot(move, shoot)
-
     def run(self):
         try:
             while self.cap and self.cap.isOpened():
@@ -201,10 +143,24 @@ class Robotron:
 
                 data, spriteGrid = self.env.process(image)
 
+                active = data['active']
+                # lives = data['lives']
+
                 if self.running:
-                    self.play(data)
-                else:
-                    self.reset()
+                    if not active:
+                        self.lastActive += 1
+                    else:
+                        self.lastActive = 0
+
+                    if self.lastActive == 3:
+                        self.reset()
+                    elif self.lastActive > 0 and self.lastActive % 100 == 0:
+                        self.output.none()
+                        self.output.start()
+                    else:
+                        sprites = data['sprites']
+                        move, shoot, self.arrows = self.ai.play(sprites)
+                        self.output.move_and_shoot(move, shoot)
 
                 try:
                     window = cv2.getWindowProperty('Robotron', 0)

@@ -2,16 +2,18 @@ import numpy as np
 
 
 class NoiseFilter():
-    def __init__(self, size, debug=False):
+    def __init__(self, size, init=None, debug=False):
         self.__counter = 0
         self.__size = 0
         self.__max_size = size
         self.__debug = debug
         self.__buffer = []
+        if init:
+            self.set(init)
 
     def set(self, num):
         if self.__size < self.__max_size:
-            self.__buffer.append(num)
+            self.__buffer.append(int(num))
             self.__size += 1
         else:
             self.__buffer[self.__counter] = num

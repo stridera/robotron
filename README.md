@@ -16,7 +16,7 @@ Training is going to be attempted using a DQN built in PyTorch.
 Planned steps:
 1. Grab image from XBox
 2. Setup Agent
-    - Grab the score and lives remaining form the image
+    - Grab the score and lives remaining from the image.  This is used to generate the reward for the models.
 3. Prepare Image
      - Crop out the play area.
      - Convert to black and white.  (optional, but color info is probably not required and it should help with network performance.)

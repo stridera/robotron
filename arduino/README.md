@@ -4,7 +4,7 @@ We are controlling the xbox using an arduino connected to an X-Arcade controller
 
 ## Hardware
 To connect to the XBox, I used parts from [X-Arcade](https://shop.xgaming.com/), and arduino, and a small circuit of optoisolators to 'click' the buttons.
-![ ](/home/strider/Code/robotron/resources/images/controller.jpg  "XBox Controller")
+![ ](../resources/images/controller.jpg  "XBox Controller")
 
 ### Parts List
 * Arduino Uno with Circuit (Shown below) - Takes input over USB from computer and 'pushes' buttons on the input adapter.

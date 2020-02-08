@@ -78,7 +78,7 @@ class AlgorithmicControl:
         closest_civ = None
         goal = self.center
 
-        if len(sprites) == 0:
+        if not sprites or len(sprites) == 0:
             return 0, 0, []
 
         _, _, px, py = sprites[0]

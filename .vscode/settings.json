@@ -1,0 +1,12 @@
+{
+  "files.watcherExclude": {
+    "**/resources/**": true,
+    "**/scratch/**": true
+  },
+  "files.autoSave": "onFocusChange",
+  "python.linting.pylintArgs": [
+    "--generated-members=cv2.*"
+  ],
+  "files.trimFinalNewlines": true,
+  "files.insertFinalNewline": true
+}

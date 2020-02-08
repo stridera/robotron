@@ -7,4 +7,6 @@ models/*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-resources/video/*
+.ipynb_checkpoints
+training/data/
+scratch/

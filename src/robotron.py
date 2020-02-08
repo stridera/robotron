@@ -1,12 +1,13 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import cv2
 import numpy as np
 import time
-from statistics import mean, median
+from statistics import mean
 
 import ai
+import capture
 import control
 import environment
 
@@ -15,15 +16,16 @@ class Robotron:
     WINDOW_NAME = "Robotron"
     FONT = cv2.FONT_HERSHEY_SIMPLEX
 
-    def __init__(self, device=2):
+    def __init__(self, capDevice=2, arduinoPort='/dev/ttyACM0'):
         self.ai = ai.AlgorithmicControl()
         # self.ai = ai.RandomControl()
-        self.controller = None #control.Controller()
-        self.output = control.Output()
+
+        self.cap = capture.VideoCapture(capDevice)
+        # self.cap = capture.VideoCapture('/home/strider/Code/robotron/resources/video/robotron-1.mp4')
+
+        self.controller = control.Controller()
+        self.output = control.Output(arduinoPort)
         self.env = environment.Environment()
-        self.cap = cv2.VideoCapture(device)
-        self.cap.set(3, 1280)
-        self.cap.set(4, 720)
 
         self.lives = 0
         self.running = False
@@ -32,6 +34,7 @@ class Robotron:
         }
         self.maxProf = 100
         self.lastActive = 0
+        self.using_controller = False
 
         self.arrows = []
 
@@ -40,9 +43,6 @@ class Robotron:
     def __del__(self):
         if self.output:
             self.output.close()
-
-        if self.cap:
-            self.cap.release()
 
         print("Killing all windows.")
         cv2.destroyAllWindows()
@@ -59,7 +59,7 @@ class Robotron:
         self.ai.reset()
 
     def handleInput(self, key):
-        if not self.running:
+        if not self.running and not self.using_controller:
             self.output.none()
 
         if key == -1:
@@ -72,8 +72,10 @@ class Robotron:
             self.output.start()
         elif key == ord('q'):
             self.output.back()
-        # elif self.controller is not None and self.controller.attached() and key == ord('c'):
-        #     self.controller.run()
+        elif self.controller is not None and self.controller.attached() and key == ord('c'):
+            self.using_controller = not self.using_controller
+            print("Using controller: ",
+                  "True" if self.using_controller else "False")
         else:
             move_key = {
                 ord('w'): 1,
@@ -107,46 +109,63 @@ class Robotron:
                     color = (0, 255, 0) if i == 0 else (0, 0, 255)
                     cv2.arrowedLine(spriteGrid, p1, p2, color, 1)
                     t = "{}".format(name)
-                    cv2.putText(spriteGrid, t, self.midpoint(p1, p2), self.FONT, 0.6, color, 1, cv2.LINE_AA)
+                    cv2.putText(spriteGrid, t, self.midpoint(p1, p2),
+                                self.FONT, 0.6, color, 1, cv2.LINE_AA)
 
             ih, _, _ = image.shape
             sgh, w, _ = spriteGrid.shape
 
             dataPanel = np.zeros((ih - sgh, w, 3), dtype=np.uint8)
+            if self.using_controller:
+                playing = "Using Controller"
+            else:
+                playing = self.running
+
             datastr = [
                 "Method: {}".format(self.ai.desc()),
                 "Score: {}".format(data['score']),
                 "Lives: {}".format(data['lives']),
                 "Active: {}".format(data['active']),
-                "Playing: {}".format(self.running),
-                "Times: Max: {:.4f}  Average: {:.4f}".format(max(self.profData['all']), mean(self.profData['all']))
+                "Playing: {}".format(playing),
+                "Times: Max: {:.4f}  Average: {:.4f}".format(
+                    max(self.profData['all']), mean(self.profData['all']))
             ]
 
             for i, line in enumerate(datastr):
-                cv2.putText(dataPanel, line, (15, (30 * i) + 30), self.FONT, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(dataPanel, line, (15, (30 * i) + 30),
+                            self.FONT, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
-            sidePanel = np.vstack((spriteGrid, dataPanel))
-            image = np.hstack((sidePanel, image))
+            side_panel = np.vstack((spriteGrid, dataPanel))
+            image = np.hstack((side_panel, image))
 
         cv2.imshow(self.WINDOW_NAME, image)
         return cv2.waitKey(1)
 
     def run(self):
         try:
-            while self.cap and self.cap.isOpened():
-                start = time.time()
-                status, image = self.cap.read()
-
-                if not status:
+            frame = 0
+            for image in self.cap:
+                if image is None:
                     print("No image received.")
                     continue
 
-                data, spriteGrid = self.env.process(image)
+                frame += 1
+                start = time.time()
+
+                data, sprite_grid = self.env.process(image)
 
                 active = data['active']
-                # lives = data['lives']
 
-                if self.running:
+                if self.using_controller:
+                    (left, right, back, start, xbox) = self.controller.read()
+                    if start:
+                        self.output.start()
+                    else:
+                        self.env.add_character_movement_hint(left)
+                        self.output.move_and_shoot(
+                            left, frame % (7 * 10) // 10 + 1)
+
+                elif self.running:
                     if not active:
                         self.lastActive += 1
                     else:
@@ -165,11 +184,15 @@ class Robotron:
                 try:
                     window = cv2.getWindowProperty('Robotron', 0)
                     if window < 0:
-                        exit(1)
+                        return
                 except Exception:
-                    exit(1)
+                    return
 
-                resp = self.showScreen(image, spriteGrid, data)
+                x, y = (586, 615)
+                w, h = (7, 12)
+                cv2.rectangle(image, (x, y), (x+w, y+h), (0, 0, 255), 1)
+
+                resp = self.showScreen(image, sprite_grid, data)
                 self.handleInput(resp)
                 end = time.time()
                 self.addProfData('all', end - start)
@@ -179,5 +202,5 @@ class Robotron:
 
 
 if __name__ == '__main__':
-    r = Robotron()#'/home/strider/Code/robotron/resources/video/robotron-1.mp4')
+    r = Robotron(0)
     r.run()

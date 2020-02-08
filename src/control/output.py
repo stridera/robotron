@@ -19,8 +19,8 @@ class Output():
     START = int('11000000', 2)
     BACK = int('00110000', 2)
 
-    def __init__(self):
-        self.ser = serial.Serial('/dev/ttyACM0')
+    def __init__(self, port):
+        self.ser = serial.Serial(port)
         if not self.ser:
             raise("Unable to connect to arduino")
 

@@ -116,9 +116,14 @@ class Controller():
 
 
 if __name__ == '__main__':
+    import output
     c = Controller()
-    running = True
-    while running:
-        (left, right, back, start, xbox) = c.read()
-        print(left, right, back, start, xbox)
-        running = not xbox
+    o = output.Output()
+
+    c.run(o)
+
+    # running = True
+    # while running:
+    #     (left, right, back, start, xbox) = c.read()
+    #     print(left, right, back, start, xbox)
+    #     running = not xbox

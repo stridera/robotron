@@ -1,71 +1,115 @@
+"""
+Process and manage the environment
+"""
+
 import cv2
-import sys
-import time
 import numpy as np
 
-from .tracker import Tracker
+# from .tracker import Tracker
+from .sprite_grid import SpriteGrid
 from .score_processor import ScoreProcessor
 from .lives_processor import LivesProcessor
+from .level_processor import LevelProcessor
 from .noise_filter import NoiseFilter
-
+from .utils import crop
 
 class Environment():
-    GAMEBOX = [114, 309, 608, 975]
-    IMAGE_SIZE = (720, 1280)
-    BOARD_SIZE = (493, 666)
+    """
+    Setup and manage the game environment
+
+    """
+    IMAGE_SIZE = (720, 1280) # Expected image size
+    GAMEBOX = [116, 309, 608, 974] # Area to crop
+
+    # Size to filter for noise.  Higher number means means we skip more noise, but creates a delay before we accept data
     FILTERSIZE = 7
 
     def __init__(self):
         ''' constructor '''
-        self.tracker = Tracker(self.IMAGE_SIZE, self.BOARD_SIZE)
-        self.scoreProcessor = ScoreProcessor()
-        self.livesProcessor = LivesProcessor()
+        left, top, right, bottom = self.GAMEBOX
+        self.tracker = SpriteGrid(self.IMAGE_SIZE, (bottom - top, right - left))
+        # self.tracker = Tracker(self.IMAGE_SIZE, (bottom - top, right - left))
+
+        self.score_processor = ScoreProcessor()
+        self.lives_processor = LivesProcessor()
+        self.level_processor = LevelProcessor()
 
         self.score = NoiseFilter(self.FILTERSIZE)
         self.lives = NoiseFilter(self.FILTERSIZE)
-        self.maxLives = 0
+
+        self.max_lives = 0 # Number of lines to allow the player to get down to before resetting.
         self.rewards = np.array([0, 0])
+
+        self.player_location = ((bottom - top + 1) // 2, (right - left + 1) // 2)
 
         self.frame = 0
 
     def reset(self):
+        """
+        Resets the environment.
+        """
+
         self.tracker.reset()
         self.rewards = np.array([0, 0])
         self.frame = 0
         self.score.zero()
         self.lives.zero()
 
-    def getGamebox(self, image):
-        (x, y, x1, y1) = self.GAMEBOX
-        return image[x:x1, y:y1]
+        left, top, right, bottom = self.GAMEBOX
+        self.player_location = ((bottom - top + 1) // 2, (right - left + 1) // 2)
 
-    def overlayText(self, image, text, location, size=3, weight=8, color=(255, 255, 255)):
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        (x, y0) = location
-        dy = 40
-        for i, line in enumerate(text.split('\n')):
-            y = y0 + i * dy
-            cv2.putText(image, line, (x, y), font, size, color, weight)
-        return image
+
+    def add_character_movement_hint(self, direction):
+        """
+        Add a hint to where we think the character moved to.
+
+        Arguments:
+            direction {int} -- Direction from 0-8.
+        """
+        px = 1
+        py = 1
+        self.player_location = np.add(self.player_location, (
+            # x   y
+            (0, 0),  # No movement
+            (0, -py),  # Up
+            (px, -py),  # Up/Right
+            (px, py),  # Right
+            (px, py),  # Down Right
+            (0, py),  # Down
+            (-px, py),  # Down Left
+            (-px, 0),  # Left
+            (-px, -py),  # Left Up
+        )[direction])
 
     def process(self, image):
-        active = False
-        done = False
+        """
+        Process a single frame
 
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gamebox = self.getGamebox(gray)
-        score = self.scoreProcessor.getScore(gray)
+        Arguments:
+            image {ndarray} -- Input image
+
+        Returns:
+            list(list, ndarray) -- Returns a list of data processed and an annotated image for debugging.
+        """
+        active = False
+        game_over = False
         score_delta = 0
         sprites = []
         sprite_map_image = None
 
-        if (score != -1):
-            self.lives.set(self.livesProcessor.getLives(gray))
-            if (self.frame > self.FILTERSIZE and self.lives.get() < self.maxLives):
-                done = True
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gamebox = crop(image, Environment.GAMEBOX)
+        score = self.score_processor.getScore(gray)
+        level = self.level_processor.getLevel(gray)
+        print(level)
 
-            if self.lives.get() > self.maxLives:
-                self.maxLives = self.lives.get()
+        if score != -1:
+            self.lives.set(self.lives_processor.getLives(gray))
+            if (self.frame > self.FILTERSIZE and self.lives.get() < self.max_lives):
+                game_over = True
+
+            if self.lives.get() > self.max_lives:
+                self.max_lives = self.lives.get()
 
             active = True
             self.frame += 1
@@ -74,7 +118,10 @@ class Environment():
             score_after = self.score.get()
             score_delta = score_after - score_before
 
-            sprites, sprite_map_image = self.tracker.update(gamebox)
+            # sprites, sprite_map_image = self.tracker.update(gamebox, image)
+            sprite_map_image = gamebox.copy()
+            x, y = self.player_location
+            cv2.rectangle(sprite_map_image, (x-5, y-5), (x+5, y+5), (0, 0, 255), 1)
 
         # Calculate Movement Reward
         movement_reward = 1
@@ -89,7 +136,7 @@ class Environment():
             while score_delta >= 1000:
                 score_delta -= 1000
 
-        score_delta = int(score_delta / 10)
+        score_delta = score_delta // 10
         self.rewards += [movement_reward, score_delta]
 
         data = {
@@ -97,10 +144,11 @@ class Environment():
             'score': self.score.get(),
             'lives': self.lives.get(),
             # 'level': self.level,
+            'player_location': self.player_location,
             'movement_reward': self.rewards[0],
             'shooting_reward': self.rewards[1],
             'active': active,
-            'game_over': done,
+            'game_over': game_over,
             'sprites': sprites,
         }
 

@@ -10,11 +10,13 @@ r"""
 
 import time
 import sys
+import concurrent.futures
 from enum import Enum
+from collections import namedtuple
 from statistics import mean
-
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 
 import ai
 import capture
@@ -51,15 +53,19 @@ class Robotron:
         # self.cap = capture.VideoCapture('/home/strider/Code/robotron/resources/video/robotron-1.mp4')
 
         self.controller = control.Controller()
-        self.output = control.Output(arduinoPort)
+        self.output = None  # control.Output(arduinoPort)
         self.env = environment.Environment()
 
-        self.profile_data = {'all': [0], 'shoot_ai': [0], 'move_ai': [0]}
+        self.profile_data = {'all': [0], 'ai': [0]}
         self.max_prof = 100
         self.last_active = 0
+        self.graph = namedtuple('graph', ['initialized', 'fig', 'line1'])
+        self.graph.initialized = False
 
         self.state = STATE.STOPPED
         self.using_controller = False
+
+        self.executor = concurrent.futures.ProcessPoolExecutor()
 
         cv2.namedWindow(self.WINDOW_NAME)
 
@@ -86,12 +92,14 @@ class Robotron:
 
         if key == ord('`'):
             self.state = STATE.RUNNING if self.state == STATE.STOPPED else STATE.STOPPED
-        elif key == ord('Q'):
+        elif key == ord('q'):
             sys.exit(1)
         elif key == ord('e'):
-            self.output.start()
+            if self.output:
+                self.output.start()
         elif key == ord('q'):
-            self.output.back()
+            if self.output:
+                self.output.back()
         elif self.controller is not None and self.controller.attached() and key == ord('c'):
             self.using_controller = not self.using_controller
             print("Using controller: ",
@@ -113,16 +121,41 @@ class Robotron:
 
             move = move_key.get(key, 0)
             shoot = shoot_key.get(key, 0)
-            if move or shoot:
-                self.output.move_and_shoot(move, shoot)
-            else:
-                self.output.none()
+            if self.output:
+                if move or shoot:
+                    self.output.move_and_shoot(move, shoot)
+                else:
+                    self.output.none()
+
+    def get_graph(self, data):
+        """ Create a graph and return an image """
+        if not self.graph.initialized:
+            self.graph.fig = plt.figure(figsize=(5, 4))
+
+            x1 = np.linspace(0.0, 5.0)
+            x2 = np.linspace(0.0, 2.0)
+
+            y1 = np.cos(2 * np.pi * x1) * np.exp(-x1)
+            y2 = np.cos(2 * np.pi * x2)
+            self.graph.line1, = plt.plot(x1, y1, 'ko-')
+            self.graph.initialized = True
+
+        i = data['frame']
+        self.graph.line1.set_ydata(np.cos(2 * np.pi * (x1+i*3.14/2)) * np.exp(-x1))
+
+        self.graph.fig.canvas.draw()
+        img = np.fromstring(self.graph.fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+        img = img.reshape(self.graph.fig.canvas.get_width_height()[::-1] + (3,))
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        return img
 
     def show_screen(self, image, data=None):
         """ Show the screen and data """
-        h, w, _ = image.shape
+        full_height, _, _ = image.shape
 
-        data_panel = np.zeros((h, w//3, 3), dtype=np.uint8)
+        graph_panel = self.get_graph(data)
+        graph_height, graph_width, _ = graph_panel.shape
+        data_panel = np.zeros((full_height - graph_height, graph_width, 3), dtype=np.uint8)
         if self.using_controller:
             state = "Using Controller"
         else:
@@ -136,17 +169,15 @@ class Robotron:
             "Times:",
             "  - Total: Max: {:.4f}  Average: {:.4f}".format(
                 max(self.profile_data['all']), mean(self.profile_data['all'])),
-            "  - Shooting AI: Max: {:.4f}  Average: {:.4f}".format(
-                max(self.profile_data['all']), mean(self.profile_data['move_ai'])),
-            "  - Movement AI: Max: {:.4f}  Average: {:.4f}".format(
-                max(self.profile_data['all']), mean(self.profile_data['shoot_ai'])),
+            "  - AI: Max: {:.4f}  Average: {:.4f}".format(
+                max(self.profile_data['ai']), mean(self.profile_data['ai'])),
         ]
 
         for i, line in enumerate(datastr):
             cv2.putText(data_panel, line, (15, (30 * i) + 30),
                         self.FONT, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
-        image = np.hstack((data_panel, image))
+        image = np.hstack((np.vstack((graph_panel, data_panel)), image))
 
         cv2.imshow(self.WINDOW_NAME, image)
         return cv2.waitKey(1)
@@ -166,20 +197,23 @@ class Robotron:
                 if data['game_over']:
                     self.reset()
                     if data['inactive_frame_count'] % 11 == 0:
-                        self.output.none()
+                        if self.output:
+                            self.output.none()
                     elif data['inactive_frame_count'] % 100 == 0:
-                        self.output.start()
+                        if self.output:
+                            self.output.start()
                 elif self.state == STATE.RUNNING and data['active']:
-                    move_timer = time.time()
-                    move = self.move_ai.play(game_image)
-                    self.add_profile_data('move_ai', move_timer - time.time())
+                    move_thread = self.executor.submit(self.move_ai.play, game_image)
+                    shoot_thread = self.executor.submit(self.shoot_ai.play, game_image)
 
-                    shoot_timer = time.time()
-                    shoot = self.shoot_ai.play(game_image)
-                    self.add_profile_data(
-                        'shoot_ai', shoot_timer - time.time())
+                    ai_timer = time.time()
 
-                    self.output.move_and_shoot(move, shoot)
+                    move = move_thread.result()
+                    shoot = shoot_thread.result()
+                    self.add_profile_data('ai', shoot_timer - time.time())
+
+                    if self.output:
+                        self.output.move_and_shoot(move, shoot)
 
                 # Check if window is closed, if so, quit.
                 window = cv2.getWindowProperty('Robotron', 0)
@@ -198,7 +232,7 @@ class Robotron:
 
 def main():
     """ Program Entry """
-    player = Robotron(0)
+    player = Robotron(1)
     player.run()
 
 

@@ -8,21 +8,25 @@ class NoiseFilter():
     """
     Filters out noisy data.  Basically returns the mode of the last x responses.
     """
-    def __init__(self, size, init=None, debug=False):
+
+    def __init__(self, size: int, init=None, debug=False):
         self.__counter = 0
         self.__size = 0
         self.__max_size = size
         self.__debug = debug
         self.__buffer = []
         if init:
-            self.set(init)
+            self.set_all(init)
 
-    def set(self, num):
+    def set(self, num: int):
         """
         Attempt to update the value.  Basically adds a new value to the buffer.
 
         Arguments:
             num {variable} -- The value to set
+
+        Returns:
+            variable -- The most common value in the list.
         """
         if self.__size < self.__max_size:
             self.__buffer.append(int(num))
@@ -37,6 +41,8 @@ class NoiseFilter():
 
         if self.__debug:
             print("DEBUG:", self.__buffer)
+
+        return self.get()
 
     def get(self):
         """
@@ -57,6 +63,13 @@ class NoiseFilter():
         self.__counter = 0
         self.__size = 0
         self.__buffer = []
+
+    def set_all(self, num: int):
+        """
+        Set this to equal a number (fill buffer with only that number)
+        """
+        for _ in range(self.__size):
+            self.set(num)
 
     def zero(self):
         """

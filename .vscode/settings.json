@@ -8,5 +8,8 @@
     "--generated-members=cv2.*"
   ],
   "files.trimFinalNewlines": true,
-  "files.insertFinalNewline": true
+  "files.insertFinalNewline": true,
+  "python.linting.pylintEnabled": false,
+  "python.linting.flake8Enabled": true,
+  "python.linting.enabled": true
 }

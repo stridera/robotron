@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
+""" Module handles controller input """
+
 import pygame
 
 
 class Controller():
+    """ Gets imput from a controller if attached. """
     UP = 1  # 1 << 0
     DOWN = 2  # 1 << 1
     RIGHT = 4  # 1 << 2
@@ -30,30 +33,37 @@ class Controller():
             self.has_joystick = True
             self.joystick.init()
 
-    def __bin_to_cardinal(self, b):
-        if b == 0:
-            return 0
+    def __bin_to_cardinal(self, direction):
+        """ Convert from the int direction to a cardinal direction """
+        response = 0
 
-        if b == self.UP:
-            return 1
-        if b == self.UP | self.RIGHT:
-            return 2
-        if b == self.RIGHT:
-            return 3
-        if b == self.DOWN | self.RIGHT:
-            return 4
-        if b == self.DOWN:
-            return 5
-        if b == self.DOWN | self.LEFT:
-            return 6
-        if b == self.LEFT:
-            return 7
-        if b == self.UP | self.LEFT:
-            return 8
-        print("Unknown input", b)
-        return 0
+        if direction == 0:
+            response = 0
+        elif direction == self.UP:
+            response = 1
+        elif direction == self.UP | self.RIGHT:
+            response = 2
+        elif direction == self.RIGHT:
+            response = 3
+        elif direction == self.DOWN | self.RIGHT:
+            response = 4
+        elif direction == self.DOWN:
+            response = 5
+        elif direction == self.DOWN | self.LEFT:
+            response = 6
+        elif direction == self.LEFT:
+            response = 7
+        elif direction == self.UP | self.LEFT:
+            response = 8
+        else:
+            print("Unknown input", direction)
+            response = 0
+
+        return response
 
     def read(self):
+        """ Read value from controller """
+
         if not self.has_joystick:
             raise Exception('Joystick not attached.')
 
@@ -75,19 +85,19 @@ class Controller():
         if axis1 < -0.5:
             left |= self.LEFT
 
-        a = self.joystick.get_button(self.ABUTTON)
-        b = self.joystick.get_button(self.BBUTTON)
-        x = self.joystick.get_button(self.XBUTTON)
-        y = self.joystick.get_button(self.YBUTTON)
+        a_button = self.joystick.get_button(self.ABUTTON)
+        b_button = self.joystick.get_button(self.BBUTTON)
+        x_button = self.joystick.get_button(self.XBUTTON)
+        y_button = self.joystick.get_button(self.YBUTTON)
 
         right = 0
-        if a:
+        if a_button:
             right |= self.DOWN
-        if b:
+        if b_button:
             right |= self.RIGHT
-        if y:
+        if y_button:
             right |= self.UP
-        if x:
+        if x_button:
             right |= self.LEFT
 
         return (
@@ -98,32 +108,21 @@ class Controller():
             xbox
         )
 
-    def run(self, out):
-        while True:
-            (left, right, back, start, xbox) = self.read()
-            if (xbox):
-                return
-            else:
-                if start:
-                    out.start()
-                elif back:
-                    out.back()
-                else:
-                    out.move_and_shoot(left, right)
-
     def attached(self):
+        """ Is controller attached? """
         return self.has_joystick
 
 
+def test():
+    """ Test function """
+    controller = Controller()
+
+    running = True
+    while running:
+        (left, right, back, start, xbox) = controller.read()
+        print(left, right, back, start, xbox)
+        running = not xbox
+
+
 if __name__ == '__main__':
-    import output
-    c = Controller()
-    o = output.Output()
-
-    c.run(o)
-
-    # running = True
-    # while running:
-    #     (left, right, back, start, xbox) = c.read()
-    #     print(left, right, back, start, xbox)
-    #     running = not xbox
+    test()

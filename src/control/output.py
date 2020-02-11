@@ -20,9 +20,11 @@ class Output():
     BACK = int('00110000', 2)
 
     def __init__(self, port):
-        self.ser = serial.Serial(port)
-        if not self.ser:
-            raise("Unable to connect to arduino")
+        try:
+            self.ser = serial.Serial(port)
+        except serial.SerialException:
+            self.ser = None
+            print("Unable to connect to arduino.  Simulating output.")
 
         self.dir = [
             0,
@@ -40,9 +42,12 @@ class Output():
         print('READ:', self.ser.readline())
 
     def __write(self, val):
-        self.ser.write(val.to_bytes(1, byteorder='big'))
-        self.ser.flush()
-        self.ser.flushInput()
+        if self.ser:
+            self.ser.write(val.to_bytes(1, byteorder='big'))
+            self.ser.flush()
+            self.ser.flushInput()
+        else:
+            print(f"Simulated Output: {val}")
 
     def move_and_shoot(self, left, right):
         both = (self.dir[left] << 4) | self.dir[right]

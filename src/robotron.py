@@ -53,7 +53,7 @@ class Robotron:
         # self.cap = capture.VideoCapture('/home/strider/Code/robotron/resources/video/robotron-1.mp4')
 
         self.controller = control.Controller()
-        self.output = None  # control.Output(arduinoPort)
+        self.output = control.Output(arduinoPort)
         self.env = environment.Environment()
 
         self.profile_data = {'all': [0], 'ai': [0]}
@@ -70,8 +70,7 @@ class Robotron:
         cv2.namedWindow(self.WINDOW_NAME)
 
     def __del__(self):
-        if self.output:
-            self.output.close()
+        self.output.close()
 
         print("Killing all windows.")
         cv2.destroyAllWindows()
@@ -95,11 +94,9 @@ class Robotron:
         elif key == ord('q'):
             sys.exit(1)
         elif key == ord('e'):
-            if self.output:
-                self.output.start()
+            self.output.start()
         elif key == ord('q'):
-            if self.output:
-                self.output.back()
+            self.output.back()
         elif self.controller is not None and self.controller.attached() and key == ord('c'):
             self.using_controller = not self.using_controller
             print("Using controller: ",
@@ -121,24 +118,23 @@ class Robotron:
 
             move = move_key.get(key, 0)
             shoot = shoot_key.get(key, 0)
-            if self.output:
-                if move or shoot:
-                    self.output.move_and_shoot(move, shoot)
-                else:
-                    self.output.none()
+            if move or shoot:
+                self.output.move_and_shoot(move, shoot)
+            else:
+                self.output.none()
 
     def get_graph(self, data):
         """ Create a graph and return an image """
+        x1 = np.linspace(0.0, 5.0)
+        x2 = np.linspace(0.0, 2.0)
         if not self.graph.initialized:
             self.graph.fig = plt.figure(figsize=(5, 4))
-
-            x1 = np.linspace(0.0, 5.0)
-            x2 = np.linspace(0.0, 2.0)
 
             y1 = np.cos(2 * np.pi * x1) * np.exp(-x1)
             y2 = np.cos(2 * np.pi * x2)
             self.graph.line1, = plt.plot(x1, y1, 'ko-')
             self.graph.initialized = True
+            print("Initialized")
 
         i = data['frame']
         self.graph.line1.set_ydata(np.cos(2 * np.pi * (x1+i*3.14/2)) * np.exp(-x1))
@@ -197,11 +193,9 @@ class Robotron:
                 if data['game_over']:
                     self.reset()
                     if data['inactive_frame_count'] % 11 == 0:
-                        if self.output:
-                            self.output.none()
+                        self.output.none()
                     elif data['inactive_frame_count'] % 100 == 0:
-                        if self.output:
-                            self.output.start()
+                        self.output.start()
                 elif self.state == STATE.RUNNING and data['active']:
                     move_thread = self.executor.submit(self.move_ai.play, game_image)
                     shoot_thread = self.executor.submit(self.shoot_ai.play, game_image)
@@ -212,8 +206,7 @@ class Robotron:
                     shoot = shoot_thread.result()
                     self.add_profile_data('ai', shoot_timer - time.time())
 
-                    if self.output:
-                        self.output.move_and_shoot(move, shoot)
+                    self.output.move_and_shoot(move, shoot)
 
                 # Check if window is closed, if so, quit.
                 window = cv2.getWindowProperty('Robotron', 0)

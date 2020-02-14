@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 """ Grabs the score from a grayscale image """
 
 import hashlib

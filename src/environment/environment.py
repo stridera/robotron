@@ -23,12 +23,11 @@ class Environment():
     # Number of inactive frames before we believe the game is over.  Should be enough to handle level transitions.
     MAX_INACTIVE = 0
 
-    CIVILIAN_REWARD = 100
+    CIVILIAN_REWARD = 50
     DEATH_REWARD = -100
 
     def __init__(self):
         ''' constructor '''
-
         self.score_processor = ScoreProcessor()
         self.lives_processor = LivesProcessor()
 
@@ -45,13 +44,14 @@ class Environment():
 
     def reset(self):
         """ Resets the environment. """
-
+        print("RESETTING!")
         self.frame = 0
         self.inactive_frames = -1
         self.score.zero()
-        self.lives.set_all(3)
+        self.lives.set_all(2)
         self.last_score = 0
         self.last_lives = 0
+        self.game_over = False
 
     def process(self, image):
         """
@@ -65,8 +65,8 @@ class Environment():
         """
         movement_reward = 0
         active = False
-        game_over = False
         score_delta = 0
+        game_over = False
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         gamebox = crop(image, Environment.GAMEBOX)
@@ -75,19 +75,20 @@ class Environment():
         if score == -1:
             if self.inactive_frames != -1:
                 self.inactive_frames += 1
-                if self.inactive_frames > self.MAX_INACTIVE:
-                    game_over = True
         else:
             self.inactive_frames = 0
             active = True
             self.frame += 1
 
-            movement_reward += 1
+            movement_reward += 10
 
             lives_after = self.lives.set(self.lives_processor.getLives(gray))
             if lives_after < self.last_lives:
-                movement_reward -= self.DEATH_REWARD
+                movement_reward += self.DEATH_REWARD
             self.last_lives = lives_after
+
+            if self.last_lives == 0:
+                game_over = True
 
             score_after = self.score.set(score)
             score_delta = score_after - self.last_score
@@ -110,7 +111,7 @@ class Environment():
                     score_delta -= 1000
 
             if score_delta > 0:
-                score_delta = score_delta // 10
+                score_delta = score_delta
             else:
                 score_delta = 0
 

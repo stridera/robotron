@@ -12,29 +12,28 @@ import time
 import sys
 import concurrent.futures
 from enum import Enum
-from collections import namedtuple
 from statistics import mean
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 
 import ai
 import capture
 import control
 import environment
+from utils import Graph
 
 
 class STATE(Enum):
     """ State enum """
-    STOPPED = 1
-    RUNNING = 2
-    QUITTING = 3
+    RUNNING = 0
+    RESETTING = 1
+    QUITTING = 2
 
     def __str__(self):
         # pylint: disable=invalid-sequence-index
         return [
-            "Stopped",
             "Running",
+            "Resetting",
             "Quitting"
         ][self.value]
 
@@ -56,14 +55,24 @@ class Robotron:
         self.output = control.Output(arduinoPort)
         self.env = environment.Environment()
 
-        self.profile_data = {'all': [0], 'ai': [0]}
+        self.profile_data = {'all': [0], 'ai': [0], 'env': [0]}
         self.max_prof = 100
         self.last_active = 0
-        self.graph = namedtuple('graph', ['initialized', 'fig', 'line1'])
-        self.graph.initialized = False
+        self.ai_in_control = False
 
-        self.state = STATE.STOPPED
+        self.state = STATE.RUNNING
         self.using_controller = False
+
+        self.graph = Graph((5, 5))
+        self.graph.add_graph('loss', 'Loss Graph of last 1000 Epoch', 1000)
+        self.graph.add_line('loss', 'move', 'g-', 'Move')
+        self.graph.add_line('loss', 'shoot', 'r-', 'Shoot')
+        self.graph.add_line('loss', 'moveq', 'y-', 'Move Q')
+        self.graph.add_line('loss', 'shootq', 'b-', 'Shoot Q')
+
+        self.graph.add_graph('rewards', 'Reward for last 100 actions')
+        self.graph.add_line('rewards', 'move', 'g-', 'Movement')
+        self.graph.add_line('rewards', 'shoot', 'r-', 'Shooting')
 
         self.executor = concurrent.futures.ProcessPoolExecutor()
 
@@ -77,22 +86,22 @@ class Robotron:
 
     def add_profile_data(self, name, delta):
         """ Add profile data """
-        self.profile_data[name].append(delta)
+        self.profile_data[name].append(delta*1000.0)
         if len(self.profile_data[name]) > self.max_prof:
             self.profile_data[name] = self.profile_data[name][-self.max_prof:]
 
     def reset(self):
         """ Reset the game from an already running game. """
-        # self.output.reset()
         self.env.reset()
+        self.output.reset()
 
     def handle_input(self, key):
         """ Process either keyboard or controller input """
-
         if key == ord('`'):
-            self.state = STATE.RUNNING if self.state == STATE.STOPPED else STATE.STOPPED
+            self.ai_in_control = not self.ai_in_control
+            self.state = STATE.RESETTING
         elif key == ord('q'):
-            sys.exit(1)
+            self.state = STATE.QUITTING
         elif key == ord('e'):
             self.output.start()
         elif key == ord('q'):
@@ -123,33 +132,12 @@ class Robotron:
             else:
                 self.output.none()
 
-    def get_graph(self, data):
-        """ Create a graph and return an image """
-        x1 = np.linspace(0.0, 5.0)
-        x2 = np.linspace(0.0, 2.0)
-        if not self.graph.initialized:
-            self.graph.fig = plt.figure(figsize=(5, 4))
-
-            y1 = np.cos(2 * np.pi * x1) * np.exp(-x1)
-            y2 = np.cos(2 * np.pi * x2)
-            self.graph.line1, = plt.plot(x1, y1, 'ko-')
-            self.graph.initialized = True
-            print("Initialized")
-
-        i = data['frame']
-        self.graph.line1.set_ydata(np.cos(2 * np.pi * (x1+i*3.14/2)) * np.exp(-x1))
-
-        self.graph.fig.canvas.draw()
-        img = np.fromstring(self.graph.fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-        img = img.reshape(self.graph.fig.canvas.get_width_height()[::-1] + (3,))
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        return img
-
     def show_screen(self, image, data=None):
         """ Show the screen and data """
         full_height, _, _ = image.shape
 
-        graph_panel = self.get_graph(data)
+        graph_panel = self.graph.get_image()
+
         graph_height, graph_width, _ = graph_panel.shape
         data_panel = np.zeros((full_height - graph_height, graph_width, 3), dtype=np.uint8)
         if self.using_controller:
@@ -157,30 +145,38 @@ class Robotron:
         else:
             state = self.state
 
-        datastr = [
-            "Score: {}".format(data['score']),
-            "Lives: {}".format(data['lives']),
-            "Active: {}".format(data['active']),
-            "State: {}".format(state),
-            "Times:",
-            "  - Total: Max: {:.4f}  Average: {:.4f}".format(
-                max(self.profile_data['all']), mean(self.profile_data['all'])),
-            "  - AI: Max: {:.4f}  Average: {:.4f}".format(
-                max(self.profile_data['ai']), mean(self.profile_data['ai'])),
-        ]
+        if data:
+            datastr = [
+                f"Frame: {data['frame']}   Score: {data['score']} Lives: {data['lives']}",
+                f"Movement Reward: {data['movement_reward']} - Shooting Reward: {data['shooting_reward']}",
+                f"Active: {data['active']}  Game Over: {data['game_over']}",
+                f"AI in Controlled: {self.ai_in_control} State: {state}",
+                "Profiling Times: (Last 100 frames)",
+                "  - Total: Max: {:.4f}ms  Average: {:.4f}ms".format(
+                    max(self.profile_data['all']), mean(self.profile_data['all'])),
+                "  - AI: Max: {:.4f}ms  Average: {:.4f}ms".format(
+                    max(self.profile_data['ai']), mean(self.profile_data['ai'])),
+                "  - Env: Max: {:.4f}ms  Average: {:.4f}ms".format(
+                    max(self.profile_data['env']), mean(self.profile_data['env'])),
+            ]
 
-        for i, line in enumerate(datastr):
-            cv2.putText(data_panel, line, (15, (30 * i) + 30),
-                        self.FONT, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+            for i, line in enumerate(datastr):
+                cv2.putText(data_panel, line, (15, (20 * i) + 20),
+                            self.FONT, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
-        image = np.hstack((np.vstack((graph_panel, data_panel)), image))
+        image = np.hstack(
+            (np.vstack((graph_panel, data_panel)),
+             image[0:full_height, 300:980])
+        )
 
         cv2.imshow(self.WINDOW_NAME, image)
         return cv2.waitKey(1)
 
     def run(self):
         """ Run the player """
+
         try:
+            wait_frame = 0
             for image in self.cap:
                 if image is None:
                     print("No image received.")
@@ -188,25 +184,41 @@ class Robotron:
 
                 start = time.time()
 
+                env_start = time.time()
                 game_image, data = self.env.process(image)
+                self.add_profile_data('env', time.time() - env_start)
 
-                if data['game_over']:
-                    self.reset()
-                    if data['inactive_frame_count'] % 11 == 0:
-                        self.output.none()
-                    elif data['inactive_frame_count'] % 100 == 0:
-                        self.output.start()
-                elif self.state == STATE.RUNNING and data['active']:
-                    move_thread = self.executor.submit(self.move_ai.play, game_image)
-                    shoot_thread = self.executor.submit(self.shoot_ai.play, game_image)
+                self.graph.add('rewards', 'move', data['movement_reward'])
+                self.graph.add('rewards', 'shoot', data['shooting_reward'])
+                print(data['score'])
+                if self.ai_in_control:
+                    if self.state == STATE.RESETTING:
+                        wait_frame += 1
+                        self.output.reset(wait_frame//10)
+                        if wait_frame > 50:
+                            if data['score'] == 0:
+                                self.env.reset()
 
-                    ai_timer = time.time()
+                                self.state = STATE.RUNNING
 
-                    move = move_thread.result()
-                    shoot = shoot_thread.result()
-                    self.add_profile_data('ai', shoot_timer - time.time())
+                    elif data['game_over']:
+                        self.state = STATE.RESETTING
 
-                    self.output.move_and_shoot(move, shoot)
+                    elif self.state == STATE.RUNNING and data['active']:
+                        wait_frame = 0
+
+                        move_thread = self.executor.submit(self.move_ai.play, game_image)
+                        shoot_thread = self.executor.submit(self.shoot_ai.play, game_image)
+
+                        ai_timer = time.time()
+                        move = move_thread.result()
+                        shoot = shoot_thread.result()
+                        self.add_profile_data('ai', time.time() - ai_timer)
+
+                        self.output.move_and_shoot(move, shoot)
+
+                if self.state == STATE.QUITTING:
+                    return
 
                 # Check if window is closed, if so, quit.
                 window = cv2.getWindowProperty('Robotron', 0)
@@ -225,7 +237,7 @@ class Robotron:
 
 def main():
     """ Program Entry """
-    player = Robotron(1)
+    player = Robotron(2)
     player.run()
 
 

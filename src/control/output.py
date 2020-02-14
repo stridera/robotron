@@ -76,31 +76,12 @@ class Output():
         if self.ser is not None:
             self.ser.close()
 
-    def reset(self, first_time=False):
-        self.none()
-        time.sleep(2)
-        self.start()
-        time.sleep(0.1)
-        self.none()
-        time.sleep(0.3)
-        if first_time:
-            self.move(self.UP)
-            time.sleep(0.1)
+    def reset(self, frame=0):
+        if frame == 1:
+            self.start()
+        if frame in [3, 5]:
+            self.__write(self.BTN_A)
+        # elif frame in [9, 11, 13]:
+        #     self.__write(self.BTN_A)
+        else:
             self.none()
-            time.sleep(0.3)
-        self.__write(self.BTN_A)
-        time.sleep(0.1)
-        self.none()
-        time.sleep(0.3)
-        self.__write(self.BTN_A)
-        time.sleep(0.1)
-        self.none()
-        time.sleep(0.3)
-        self.__write(self.BTN_A)
-        time.sleep(0.1)
-        self.none()
-        time.sleep(2)
-        self.__write(self.BTN_A)
-        time.sleep(0.1)
-        self.none()
-        time.sleep(1)

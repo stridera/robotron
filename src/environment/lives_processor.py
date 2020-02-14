@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class LivesProcessor():
     LIFE_BOX = np.array([501, 91])
     LIFE_SIZE = np.array([14, 14])
@@ -26,4 +27,5 @@ class LivesProcessor():
             br[0] = tl[0] + self.LIFE_SIZE[0]
             lives_img = gray[tl[1]:br[1], tl[0]:br[0]]
             lives_bin = self.imgCleanup(lives_img)
+
         return lives

@@ -9,8 +9,8 @@ from torchvision import models
 
 from collections import namedtuple
 
-Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward', 'done'))
+Samples = namedtuple('Samples',
+                     ('state', 'action', 'next_state', 'reward', 'done'))
 
 
 class ReplayMemory(object):
@@ -25,7 +25,7 @@ class ReplayMemory(object):
         """Saves a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
+        self.memory[self.position] = Samples(*args)
         self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
@@ -61,8 +61,8 @@ class DQNAgent(object):
         transitions = self.memory.sample(self.batch_size)
         # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
         # detailed explanation). This converts batch-array of Transitions
-        # to Transition of batch-arrays.
-        batch = Transition(*zip(*transitions))
+        # to Samples of batch-arrays.
+        batch = Samples(*zip(*transitions))
 
         # Compute a mask of non-final states and concatenate the batch elements
         # (a final state would've been the one after which simulation ended)
@@ -132,4 +132,4 @@ class DQN:
 
     def play(self, image):
         """ Play one round """
-        return 1
+        return random.randint(0, 8)

@@ -44,7 +44,6 @@ class Environment():
 
     def reset(self):
         """ Resets the environment. """
-        print("RESETTING!")
         self.frame = 0
         self.inactive_frames = -1
         self.score.zero()

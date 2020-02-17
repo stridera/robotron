@@ -31,6 +31,7 @@ class Graph:
         self.graphs = {}
         self.size = size
         self.dirty = True
+        self.iteration = 0
 
     def update_limits(self) -> None:
         ngraphs = len(self.graphs)
@@ -79,10 +80,12 @@ class Graph:
 
     def get_image(self) -> 'np.array[np.int]':
         """ Return an image of the graph """
+        # self.iteration += 1
 
-        if self.dirty:
+        if self.dirty:  # or self.iteration > 50:
             self.update_limits()
             self.dirty = False
+            # self.iteration = 0
 
         for graph_name in self.graphs:
             for line_name in self.graphs[graph_name].lines:

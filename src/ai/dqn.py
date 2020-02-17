@@ -1,108 +1,14 @@
 # -*- coding: utf-8 -*-
 """ The DQN Model """
 import random
-from collections import namedtuple
 import numpy as np
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
-
-Samples = namedtuple('Samples', ('state', 'action', 'state_prime', 'reward', 'done'))
-
-
-class ReplayMemory():
-    """ Holds the replay buffer for the model """
-
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.memory = []
-        self.position = 0
-
-    def push(self, *args):
-        """Saves a transition."""
-        if len(self.memory) < self.capacity:
-            self.memory.append(None)
-        self.memory[self.position] = Samples(*args)
-        self.position = (self.position + 1) % self.capacity
-
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
-
-    def __len__(self):
-        return len(self.memory)
-
-
-class SpatialCrossMapLRN(nn.Module):
-    def __init__(self, local_size=1, alpha=1.0, beta=0.75, k=1, ACROSS_CHANNELS=True):
-        super(SpatialCrossMapLRN, self).__init__()
-        self.ACROSS_CHANNELS = ACROSS_CHANNELS
-        if ACROSS_CHANNELS:
-            self.average = nn.AvgPool3d(kernel_size=(local_size, 1, 1),
-                                        stride=1,
-                                        padding=(int((local_size-1.0)/2), 0, 0))
-        else:
-            self.average = nn.AvgPool2d(kernel_size=local_size,
-                                        stride=1,
-                                        padding=int((local_size-1.0)/2))
-        self.alpha = alpha
-        self.beta = beta
-        self.k = k
-
-    def forward(self, x):
-        if self.ACROSS_CHANNELS:
-            div = x.pow(2).unsqueeze(1)
-            div = self.average(div).squeeze(1)
-            div = div.mul(self.alpha).add(self.k).pow(self.beta)
-        else:
-            div = x.pow(2)
-            div = self.average(div)
-            div = div.mul(self.alpha).add(self.k).pow(self.beta)
-        x = x.div(div)
-        return x
 
 
 class DQN(nn.Module):
-    def __init__(self, number_of_actions=9):
-        super(DQN, self).__init__()
-        self.number_of_actions = number_of_actions
-        self.features = nn.Sequential(
-            nn.Conv2d(4, 96, (7, 7), (2, 2)),
-            nn.ReLU(),
-            SpatialCrossMapLRN(5, 0.0005, 0.75, 2),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
-            nn.Conv2d(96, 256, (5, 5), (2, 2), (1, 1)),
-            nn.ReLU(),
-            SpatialCrossMapLRN(5, 0.0005, 0.75, 2),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
-            nn.Conv2d(256, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True)
-        )
-        self.classif = nn.Sequential(
-            nn.Linear(35840, 4096),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(4096, 4096),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(4096, number_of_actions)
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classif(x)
-        return x
-
-
-class DQN1(nn.Module):
-
     def __init__(self, number_of_actions=9):
         super(DQN, self).__init__()
         self.number_of_actions = number_of_actions
@@ -113,9 +19,11 @@ class DQN1(nn.Module):
         self.relu2 = nn.ReLU(inplace=True)
         self.conv3 = nn.Conv2d(64, 64, 3, 1)
         self.relu3 = nn.ReLU(inplace=True)
-        self.fc4 = nn.Linear(3136, 512)
+        self.fc4 = nn.Linear(65664, 3136)
         self.relu4 = nn.ReLU(inplace=True)
-        self.fc5 = nn.Linear(512, self.number_of_actions)
+        self.fc5 = nn.Linear(3136, 512)
+        self.relu5 = nn.ReLU(inplace=True)
+        self.fc6 = nn.Linear(512, self.number_of_actions)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -128,6 +36,8 @@ class DQN1(nn.Module):
         x = self.fc4(x)
         x = self.relu4(x)
         x = self.fc5(x)
+        x = self.relu5(x)
+        x = self.fc6(x)
         return x
 
 
@@ -136,86 +46,78 @@ class DQNAgent:
         self.device = device
         self.n_actions = n_actions
         self.batch_size = batch_size
-        self.memory = ReplayMemory(replay_buffer_size)
+        self.replay_buffer_size = replay_buffer_size
+        self.gamma = gamma
+        self.memory = []
         self.last_state = None
         self.iteration = 0
-        self.target_update = 10
-        self.gamma = gamma
 
-        self.policy_net = DQN().to(self.device)
-        self.target_net = DQN().to(self.device)
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=1e-3)
+        self.epsilon = 1.0  # exploration probability at start
+        self.epsilon_min = 0.01  # minimum exploration probability
+        self.epsilon_decay = 0.000005  # exponential decay rate for exploration prob
 
-        self.epsilon = 0.5
-        self.epsilon_min = 0.05
-        self.epsilon_decay = 5
+        self.model = DQN(n_actions).to(self.device)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=1e-6)
+        self.criterion = nn.MSELoss()
 
-    def update_network(self, updates=1):
-        for _ in range(updates):
-            self._do_network_update()
-
-    def _do_network_update(self):
+    def update_network(self):
         if len(self.memory) < self.batch_size:
             return
 
-        transitions = self.memory.sample(self.batch_size)
-        # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
-        # detailed explanation). This converts batch-array of Transitions
-        # to Samples of batch-arrays.
-        batch = Samples(*zip(*transitions))
+        # sample random minibatch
+        minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
 
-        # Compute a mask of non-final states and concatenate the batch elements
-        # (a final state would've been the one after which simulation ended)
-        non_final_mask = 1 - torch.tensor(batch.done, dtype=torch.uint8)
-        non_final_next_states = [s for nonfinal, s in zip(non_final_mask, batch.state_prime) if nonfinal > 0]
-        non_final_next_states = torch.cat(non_final_next_states).to(self.device)
-        state_batch = torch.cat(batch.state).to(self.device)
-        action_batch = torch.cat(batch.action).to(self.device)
-        reward_batch = torch.cat(batch.reward).to(self.device)
+        # unpack minibatch
+        last_state_batch = torch.cat(tuple(d[0] for d in minibatch))
+        action_batch = torch.cat(tuple(d[1] for d in minibatch))
+        reward_batch = torch.cat(tuple(d[2] for d in minibatch))
+        state_batch = torch.cat(tuple(d[3] for d in minibatch))
 
+        last_state_batch = last_state_batch.to(self.device)
+        action_batch = action_batch.to(self.device)
+        reward_batch = reward_batch.to(self.device)
+        state_batch = state_batch.to(self.device)
+
+        # get output for the next state
+        output_1_batch = self.model(state_batch).to(self.device)
+
+        # set y_j to r_j for terminal state, otherwise to r_j + gamma*max(Q)
+        y_batch = torch.stack(tuple(reward_batch[i] if minibatch[i][4]
+                                    else reward_batch[i] + self.gamma * torch.max(output_1_batch[i])
+                                    for i in range(len(minibatch))))
+
+        # extract Q-value
+        q_value = self.model(last_state_batch).gather(1, action_batch).squeeze()
+
+        # PyTorch accumulates gradients by default, so they need to be reset in each pass
         self.optimizer.zero_grad()
 
-        # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
-        # columns of actions taken. These are the actions which would've been taken
-        # for each batch state according to policy_net
-        state_action_values = self.policy_net(state_batch).gather(1, action_batch)
+        # returns a new Tensor, detached from the current graph, the result will never require gradient
+        y_batch = y_batch.detach()
 
-        # Compute V(s_{t+1}) for all next states.
-        # Expected values of actions for non_final_next_states are computed based
-        # on the "older" target_net; selecting their best reward with max(1)[0].
-        # This is merged based on the mask, such that we'll have either the expected
-        # state value or 0 in case the state was final.
-        # about detach(): https://discuss.pytorch.org/t/detach-no-grad-and-requires-grad/16915/7
-        next_state_values = torch.zeros(self.batch_size).to(self.device)
-        next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
-        expected_state_action_values = reward_batch + self.gamma * next_state_values
+        # calculate loss
+        loss = self.criterion(q_value, y_batch)
 
-        # Compute Huber loss
-        loss = F.smooth_l1_loss(state_action_values.squeeze(),
-                                expected_state_action_values)
-
-        # Optimize the model
+        # do backward pass
         loss.backward()
-        for param in self.policy_net.parameters():
-            param.grad.data.clamp_(-1e-1, 1e-1)
         self.optimizer.step()
 
     def get_action(self, state):
-        self.epsilon = max(self.epsilon_min, self.epsilon_decay/(self.epsilon_decay+self.epsilon))
+        epsilon = self.epsilon_min + (self.epsilon - self.epsilon_min) * \
+            np.exp(-self.epsilon_decay * self.iteration)
+
+        self.iteration += 1
+
         sample = random.random()
-        if sample > self.epsilon:
+        if sample > epsilon:
             with torch.no_grad():
                 state = state.to(self.device)
-                q_values = self.policy_net(state).to(self.device)
-                print(np.max(q_values.cpu().detach().numpy()))
-                return torch.argmax(q_values).item()
+                q_values = self.model(state).to(self.device)
+                return torch.argmax(q_values).item(), np.max(q_values.cpu().detach().numpy()), epsilon
         else:
-            return random.randrange(self.n_actions)
+            return random.randrange(self.n_actions), 0, epsilon
 
-    def update_target_network(self):
-        self.target_net.load_state_dict(self.policy_net.state_dict())
-
-    def play(self, image, action, reward, done):
+    def play(self, name, image, action, reward, done):
         image = torch.from_numpy(np.expand_dims(image, axis=0)).float()
         action = torch.Tensor([[action]]).long()
         reward = torch.tensor([reward], dtype=torch.float32)
@@ -225,15 +127,25 @@ class DQNAgent:
 
         state = torch.cat((self.last_state.squeeze(0)[1:, :, :], image)).unsqueeze(0)
 
-        self.memory.push(self.last_state, action, state, reward, done)
+        self.memory.append((self.last_state, action, reward, state, done))
+
+        if len(self.memory) > self.replay_buffer_size:
+            self.memory.pop(0)
+
         self.update_network()
+        action = self.get_action(state)
 
         self.last_state = state
 
-        # Update the target network, copying all weights and biases in DQN
-        if self.iteration % self.target_update == 0:
-            self.update_target_network()
+        if self.iteration % 25000 == 0:
+            torch.save(self.model, f"model/{name}_model_" + str(self.iteration) + ".pth")
 
         self.iteration += 1
 
-        return self.get_action(state)
+        return action
+
+    def loop(self, name, in_queue, out_queue):
+        args = in_queue.get()
+        while args:
+            out_queue.put(self.play(name, *args))
+            args = in_queue.get()

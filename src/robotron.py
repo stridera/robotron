@@ -9,7 +9,6 @@ r"""
 """
 
 import time
-import sys
 import concurrent.futures
 from enum import Enum
 from statistics import mean
@@ -45,15 +44,15 @@ class Robotron:
 
     def __init__(self, capDevice=2, arduinoPort='/dev/ttyACM0'):
 
-        self.move_ai = ai.DQN()
-        self.shoot_ai = ai.DQN()
-
         self.cap = capture.VideoCapture(capDevice)
         # self.cap = capture.VideoCapture('/home/strider/Code/robotron/resources/video/robotron-1.mp4')
 
-        self.controller = control.Controller()
         self.output = control.Output(arduinoPort)
+        self.controller = control.Controller()
         self.env = environment.Environment()
+
+        self.move_ai = ai.DQNAgent("cuda:0")
+        self.shoot_ai = ai.DQNAgent("cuda:1")
 
         self.profile_data = {'all': [0], 'ai': [0], 'env': [0]}
         self.max_prof = 100
@@ -64,11 +63,11 @@ class Robotron:
         self.using_controller = False
 
         self.graph = Graph((5, 5))
-        self.graph.add_graph('loss', 'Loss Graph of last 1000 Epoch', 1000)
-        self.graph.add_line('loss', 'move', 'g-', 'Move')
-        self.graph.add_line('loss', 'shoot', 'r-', 'Shoot')
-        self.graph.add_line('loss', 'moveq', 'y-', 'Move Q')
-        self.graph.add_line('loss', 'shootq', 'b-', 'Shoot Q')
+        self.graph.add_graph('ep', 'Score/Q Graph of last 1000 Epoch', 1000)
+        self.graph.add_line('ep', 'move', 'g-', 'Move Score')
+        self.graph.add_line('ep', 'shoot', 'r-', 'Shoot Score')
+        # self.graph.add_line('ep', 'moveq', 'y-', 'Move Q')
+        # self.graph.add_line('ep', 'shootq', 'b-', 'Shoot Q')
 
         self.graph.add_graph('rewards', 'Reward for last 100 actions')
         self.graph.add_line('rewards', 'move', 'g-', 'Movement')
@@ -79,7 +78,8 @@ class Robotron:
         cv2.namedWindow(self.WINDOW_NAME)
 
     def __del__(self):
-        self.output.close()
+        if self.output:
+            self.output.close()
 
         print("Killing all windows.")
         cv2.destroyAllWindows()
@@ -99,7 +99,7 @@ class Robotron:
         """ Process either keyboard or controller input """
         if key == ord('`'):
             self.ai_in_control = not self.ai_in_control
-            self.state = STATE.RESETTING
+            # self.state = STATE.RESETTING
         elif key == ord('q'):
             self.state = STATE.QUITTING
         elif key == ord('e'):
@@ -177,6 +177,8 @@ class Robotron:
 
         try:
             wait_frame = 0
+            cum_shooting = 0
+            cum_movement = 0
             for image in self.cap:
                 if image is None:
                     print("No image received.")
@@ -190,7 +192,11 @@ class Robotron:
 
                 self.graph.add('rewards', 'move', data['movement_reward'])
                 self.graph.add('rewards', 'shoot', data['shooting_reward'])
-                print(data['score'])
+
+                move = 0
+                shoot = 0
+
+                # print(f"Score: {data['score']}")
                 if self.ai_in_control:
                     if self.state == STATE.RESETTING:
                         wait_frame += 1
@@ -198,21 +204,30 @@ class Robotron:
                         if wait_frame > 50:
                             if data['score'] == 0:
                                 self.env.reset()
-
                                 self.state = STATE.RUNNING
 
                     elif data['game_over']:
+                        self.graph.add('ep', 'move', cum_movement)
+                        self.graph.add('ep', 'shoot', cum_shooting)
+                        cum_shooting = 0
+                        cum_movement = 0
                         self.state = STATE.RESETTING
 
                     elif self.state == STATE.RUNNING and data['active']:
+                        cum_shooting += data['shooting_reward']
+                        cum_movement += data['movement_reward']
                         wait_frame = 0
 
-                        move_thread = self.executor.submit(self.move_ai.play, game_image)
-                        shoot_thread = self.executor.submit(self.shoot_ai.play, game_image)
+                        # move_thread = self.executor.submit(
+                        #     self.move_ai.play, move, state, data['movement_reward'], data['game_over'])
+                        # shoot_thread = self.executor.submit(
+                        #     self.shoot_ai.play, shoot, state, data['shooting_reward'], data['game_over'])
 
                         ai_timer = time.time()
-                        move = move_thread.result()
-                        shoot = shoot_thread.result()
+                        # move = move_thread.result()
+                        # shoot = shoot_thread.result()
+                        move = self.move_ai.play(game_image, move, data['movement_reward'], data['game_over'])
+                        shoot = self.shoot_ai.play(game_image, shoot, data['shooting_reward'], data['game_over'])
                         self.add_profile_data('ai', time.time() - ai_timer)
 
                         self.output.move_and_shoot(move, shoot)

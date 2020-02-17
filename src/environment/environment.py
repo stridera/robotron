@@ -69,7 +69,7 @@ class Environment():
         game_over = False
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gamebox = crop(image, Environment.GAMEBOX)
+        gamebox = crop(gray, Environment.GAMEBOX)
         score = self.score_processor.get_score(gray)
 
         if score == -1:
@@ -126,4 +126,5 @@ class Environment():
             'inactive_frame_count': self.inactive_frames,
         }
 
-        return gamebox, data
+        # default size: 492, 665
+        return cv2.resize(gamebox, (492//2, 665//2)), data

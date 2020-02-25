@@ -10,16 +10,16 @@ r"""
 
 import time
 import multiprocessing as mp
+import queue
 from enum import Enum
 from statistics import mean
-import cv2
-import numpy as np
+
 
 import ai
 import capture
 import control
 import environment
-from utils import Graph
+from ui import UI
 
 
 class STATE(Enum):
@@ -37,65 +37,55 @@ class STATE(Enum):
 class Robotron:
     """ Robotron XBox Player """
 
-    WINDOW_NAME = "Robotron"
-    FONT = cv2.FONT_HERSHEY_SIMPLEX
-
     def __init__(self, capDevice=2, arduinoPort="/dev/ttyACM0"):
+        mp.set_start_method("spawn")
 
         self.cap = capture.VideoCapture(capDevice)
-        # self.cap = capture.VideoCapture('/home/strider/Code/robotron/resources/video/robotron-1.mp4')
-
         self.output = control.Output(arduinoPort)
         self.controller = control.Controller()
         self.env = environment.Environment()
+        self.ui = UI(capDevice)
 
-        mp.set_start_method("spawn")
-        self.move_ai = ai.DQNAgent("cuda:0")
-        self.shoot_ai = ai.DQNAgent("cuda:1")
+        self.move_ai = ai.DQNAgent('move', 'cuda:0', replay_buffer_size=10000)
+        self.shoot_ai = ai.DQNAgent('shoot', 'cuda:1', replay_buffer_size=10000)
 
         self.move_q_out = mp.Queue()
         self.move_q_in = mp.Queue()
         self.shoot_q_out = mp.Queue()
         self.shoot_q_in = mp.Queue()
+        self.ui_q_out = mp.Queue()
+        self.ui_q_in = mp.Queue()
 
-        self.move_thread = mp.Process(target=self.move_ai.loop, args=('move', self.move_q_out, self.move_q_in,))
-        self.shoot_thread = mp.Process(target=self.shoot_ai.loop, args=('shoot', self.shoot_q_out, self.shoot_q_in,))
+        self.ui_thread = mp.Process(target=self.ui.loop, args=(self.ui_q_out, self.ui_q_in,))
+        self.move_thread = mp.Process(target=self.move_ai.loop, args=(self.move_q_out, self.move_q_in,))
+        self.shoot_thread = mp.Process(target=self.shoot_ai.loop, args=(self.shoot_q_out, self.shoot_q_in,))
 
-        self.profile_data = {"all": [0], "ai": [0], "env": [0]}
         self.max_prof = 100
         self.last_active = 0
         self.ai_in_control = False
-        self.move_epsilon = 0
-        self.shoot_epsilon = 0
-        self.moveq = 0
-        self.shootq = 0
+        self.episode = 0
+        self.loop_time = 0.3
+        self.profile_data = {"all": [0], "ai": [0], "env": [0]}
 
         self.state = STATE.RUNNING
         self.using_controller = False
-
-        self.graph = Graph((5, 5))
-        self.graph.add_graph("ep", "Score/Q Graph of last 1000 Epoch", 1000)
-        self.graph.add_line("ep", "move", "g-", "Move Score")
-        self.graph.add_line("ep", "shoot", "r-", "Shoot Score")
-
-        self.graph.add_graph("rewards", "Reward for last 100 actions")
-        self.graph.add_line("rewards", "move", "g-", "Movement")
-        self.graph.add_line("rewards", "shoot", "r-", "Shooting")
-
-        cv2.namedWindow(self.WINDOW_NAME)
 
     def __del__(self):
         if self.output:
             self.output.close()
 
-        print("Killing all windows.")
-        cv2.destroyAllWindows()
-
         self.move_q_out.put(None)
         self.shoot_q_out.put(None)
+        self.ui_q_out.put(None)
 
         self.move_thread.join()
         self.shoot_thread.join()
+        self.ui_thread.join()
+
+    def reset(self):
+        """ Reset the game from an already running game. """
+        self.env.reset()
+        self.output.reset()
 
     def add_profile_data(self, name, delta):
         """ Add profile data """
@@ -103,21 +93,16 @@ class Robotron:
         if len(self.profile_data[name]) > self.max_prof:
             self.profile_data[name] = self.profile_data[name][-self.max_prof:]
 
-    def reset(self):
-        """ Reset the game from an already running game. """
-        self.env.reset()
-        self.output.reset()
-
     def handle_input(self, key):
         """ Process either keyboard or controller input """
         if key == ord("`"):
             self.ai_in_control = not self.ai_in_control
-            # self.state = STATE.RESETTING
-        elif key == ord("q"):
+            self.state = STATE.RESETTING
+        elif key == ord("Q"):
             self.state = STATE.QUITTING
         elif key == ord("e"):
             self.output.start()
-        elif key == ord("q"):
+        elif key == ord("b"):
             self.output.back()
         elif (self.controller is not None and self.controller.attached() and key == ord("c")):
             self.using_controller = not self.using_controller
@@ -134,48 +119,18 @@ class Robotron:
             else:
                 self.output.none()
 
-    def show_screen(self, image, data=None):
-        """ Show the screen and data """
-        full_height, _, _ = image.shape
-
-        graph_panel = self.graph.get_image()
-
-        graph_height, graph_width, _ = graph_panel.shape
-        data_panel = np.zeros((full_height - graph_height, graph_width, 3), dtype=np.uint8)
-        if self.using_controller:
-            state = "Using Controller"
-        else:
-            state = self.state
-
-        if data:
-            datastr = [
-                f"Frame: {data['frame']}   Score: {data['score']} Lives: {data['lives']}",
-                f"Movement Reward: {data['movement_reward']} - Shooting Reward: {data['shooting_reward']}",
-                f"Active: {data['active']}  Game Over: {data['game_over']}",
-                f"AI in Controlled: {self.ai_in_control} State: {state}",
-                f"Epsilons:  Shoot: {self.shoot_epsilon:.4f}  Move: {self.move_epsilon:.4f}",
-                f"Q Values:  Shoot: {self.shootq:.4f}  Move: {self.moveq:.4f}",
-                "Profiling Times: (Last 100 frames)",
-                "  - Total: Max: {:.4f}ms  Average: {:.4f}ms".format(
-                    max(self.profile_data["all"]), mean(self.profile_data["all"])
-                ),
-                "  - AI: Max: {:.4f}ms  Average: {:.4f}ms".format(
-                    max(self.profile_data["ai"]), mean(self.profile_data["ai"])
-                ),
-                "  - Env: Max: {:.4f}ms  Average: {:.4f}ms".format(
-                    max(self.profile_data["env"]), mean(self.profile_data["env"])
-                ),
-            ]
-
-            for i, line in enumerate(datastr):
-                cv2.putText(data_panel, line, (15, (20 * i) + 20), self.FONT, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-
-        image = np.hstack(
-            (np.vstack((graph_panel, data_panel)), image[0:full_height, 300:980])
-        )
-
-        cv2.imshow(self.WINDOW_NAME, image)
-        return cv2.waitKey(1)
+    def update_ui_data(self, data):
+        data['episode'] = self.episode
+        data['state'] = self.state
+        data['ai_in_control'] = self.ai_in_control
+        data['all_max'] = max(self.profile_data["all"])
+        data['all_mean'] = mean(self.profile_data["all"])
+        data['ai_max'] = max(self.profile_data["ai"])
+        data['ai_mean'] = mean(self.profile_data["ai"])
+        data['env_max'] = max(self.profile_data["env"])
+        data['env_mean'] = mean(self.profile_data["env"])
+        self.ui_q_out.put_nowait(('data', data))
+        self.ui_q_out.put_nowait(('rewards', (data['movement_reward'], data['shooting_reward'])))
 
     def run(self):
         """ Run the player """
@@ -187,6 +142,7 @@ class Robotron:
 
             self.move_thread.start()
             self.shoot_thread.start()
+            self.ui_thread.start()
 
             move = 0
             shoot = 0
@@ -202,22 +158,18 @@ class Robotron:
                 game_image, data = self.env.process(image)
                 self.add_profile_data("env", time.time() - env_start)
 
-                self.graph.add("rewards", "move", data["movement_reward"])
-                self.graph.add("rewards", "shoot", data["shooting_reward"])
-
-                # print(f"Score: {data['score']}")
                 if self.ai_in_control:
                     if self.state == STATE.RESETTING:
-                        wait_frame += 1
-                        self.output.reset(wait_frame // 10)
-                        if wait_frame > 50:
+                        self.output.reset(wait_frame)
+                        if wait_frame > 10:
                             if data["score"] == 0:
                                 self.env.reset()
                                 self.state = STATE.RUNNING
+                                self.episode += 1
+                        wait_frame += 1
 
                     elif data["game_over"]:
-                        self.graph.add("ep", "move", cum_movement)
-                        self.graph.add("ep", "shoot", cum_shooting)
+                        self.ui_q_out.put_nowait(('ep', (cum_movement, cum_shooting)))
                         cum_shooting = 0
                         cum_movement = 0
                         self.state = STATE.RESETTING
@@ -227,38 +179,56 @@ class Robotron:
                         cum_movement += data["movement_reward"]
                         wait_frame = 0
 
-                        # move_thread = self.executor.submit(
-                        #     self.move_ai.play, move, state, data['movement_reward'], data['game_over'])
-                        # shoot_thread = self.executor.submit(
-                        #     self.shoot_ai.play, shoot, state, data['shooting_reward'], data['game_over'])
-
                         ai_timer = time.time()
-                        # move = move_thread.result()
-                        # shoot = shoot_thread.result()
                         self.move_q_out.put((game_image, move, data["movement_reward"], data["game_over"]))
                         self.shoot_q_out.put((game_image, shoot, data["shooting_reward"], data["game_over"]))
 
-                        move, self.moveq, self.move_epsilon = self.move_q_in.get()
-                        shoot, self.shootq, self.shoot_epsilon = self.shoot_q_in.get()
+                        try:
+                            move, moveq, move_epsilon = self.move_q_in.get(True, 1)
+                            shoot, shootq, shoot_epsilon = self.shoot_q_in.get(True, 1)
+                            data['moveq'] = moveq
+                            data['shootq'] = shootq
+                            data['move_epsilon'] = move_epsilon
+                            data['shoot_epsilon'] = shoot_epsilon
+                        except queue.Empty:
+                            shoot = 0
+                            move = 0
+                            print("Timeout triggered... moving on")
+
                         self.add_profile_data("ai", time.time() - ai_timer)
 
                         self.output.move_and_shoot(move, shoot)
 
+                        while not self.move_q_in.empty():
+                            self.move_q_in.get()
+                        while not self.shoot_q_in.empty():
+                            self.shoot_q_in.get()
+
+                self.update_ui_data(data)
+
                 if self.state == STATE.QUITTING:
                     return
 
-                # Check if window is closed, if so, quit.
-                window = cv2.getWindowProperty("Robotron", 0)
-                if window < 0:
-                    return
-
-                resp = self.show_screen(image, data)
-                self.handle_input(resp)
+                if not self.ui_q_in.empty():
+                    key = self.ui_q_in.get_nowait()
+                    if key:
+                        print(key)
+                        self.handle_input(key)
+                        time.sleep(0.1)
+                        self.output.none()
+                    else:
+                        self.state = STATE.QUITTING
 
                 end = time.time()
-                self.add_profile_data("all", end - start)
+                loop_time = end - start
+                self.add_profile_data("all", loop_time)
 
-        except KeyboardInterrupt:
+                if loop_time < self.loop_time:
+                    sleep_time = self.loop_time - loop_time
+                    time.sleep(sleep_time)
+                else:
+                    print('Loop took longer than loop_time: ', loop_time)
+        except (KeyboardInterrupt, BrokenPipeError):
             print("Interrupt detected.  Exiting...")
 
 

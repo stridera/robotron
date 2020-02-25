@@ -32,9 +32,13 @@ class Graph:
         self.size = size
         self.dirty = True
         self.iteration = 0
+        self.fig = None
+        self.ax = None
 
     def update_limits(self) -> None:
         ngraphs = len(self.graphs)
+        if self.fig:
+            plt.close(self.fig)
         self.fig, self.ax = plt.subplots(ngraphs, 1, figsize=self.size, facecolor="black")
 
         for i, graph_name in enumerate(self.graphs):

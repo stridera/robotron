@@ -104,7 +104,8 @@ class DoubleDQN(nn.Module):
 
 
 class DDQNAgent:
-    def __init__(self, device=0, n_actions=9, replay_buffer_size=50000, batch_size=32, gamma=0.98):
+    def __init__(self, name, device=0, n_actions=9, replay_buffer_size=50000, batch_size=32, gamma=0.98):
+        self.name = name
         self.device = device
         self.n_actions = n_actions
         self.batch_size = batch_size
@@ -208,9 +209,18 @@ class DDQNAgent:
 
         self.iteration += 1
 
-        return self.get_action(state)
+        self.update_network()
+        action = self.get_action(state)
 
-    def loop(self, name, in_queue, out_queue):
+        self.last_state = state
+
+        if self.iteration % 25000 == 0:
+            print("Saving model")
+            torch.save(self.model, f"model/{self.name}_model_" + str(self.iteration) + ".pth")
+
+        return action
+
+    def loop(self, in_queue, out_queue):
         args = in_queue.get()
         while args:
             out_queue.put(self.play(*args))

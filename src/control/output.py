@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import serial
-import time
 
 
 class Output():
@@ -77,11 +76,14 @@ class Output():
             self.ser.close()
 
     def reset(self, frame=0):
-        if frame == 1:
+        if frame == 0:
             self.start()
-        if frame in [3, 5]:
+        elif frame % 2 == 0:
             self.__write(self.BTN_A)
-        # elif frame in [9, 11, 13]:
-        #     self.__write(self.BTN_A)
         else:
             self.none()
+
+
+if __name__ == "__main__":
+    o = Output("/dev/ttyACM0")
+    o.shoot(1)

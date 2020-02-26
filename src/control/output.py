@@ -76,7 +76,7 @@ class Output():
             self.ser.close()
 
     def reset(self, frame=0):
-        if frame == 0:
+        if frame % 20 == 0:
             self.start()
         elif frame % 2 == 0:
             self.__write(self.BTN_A)

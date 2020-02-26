@@ -78,13 +78,15 @@ class DQN(nn.Module):
 
 
 class DQNAgent:
-    def __init__(self, name, device=0, n_actions=9, replay_buffer_size=50000, batch_size=32, gamma=0.98):
+    def __init__(self, name, device=0, n_actions=9, replay_buffer_size=50000, buffer_size=7, batch_size=32, gamma=0.98):
         self.name = name
         self.device = device
         self.n_actions = n_actions
         self.batch_size = batch_size
         self.replay_buffer_size = replay_buffer_size
+        self.buffer_size = buffer_size
         self.gamma = gamma
+        self.buffer = []
         self.memory = []
         self.last_state = None
         self.iteration = 0
@@ -164,8 +166,25 @@ class DQNAgent:
 
         state = torch.cat((self.last_state.squeeze(0)[1:, :, :], image)).unsqueeze(0)
 
-        self.memory.append((self.last_state, action, reward, state, done))
-        # print(self.name, len(self.memory))
+        episode = (self.last_state, action, reward, state, done)
+
+        # The negative death reward doesn't trigger until like 8 frames late.  In order to make
+        # the model better represent that in the reward, we'll keep a buffer and we'll train on
+        # data that's 8 frames old.  We'll update the reward if we see a negative
+        if self.name == 'move':
+            died = False
+            if reward < 0:
+                reward = torch.tensor([0.], dtype=torch.float32)
+                died = True
+            self.buffer.append((self.last_state, action, reward, state, done))
+            if len(self.buffer) > self.buffer_size:
+                episode = self.buffer.pop(0)
+                if died:
+                    (self.last_state, action, reward, state, done) = episode
+                    reward -= 100
+                    episode = (self.last_state, action, reward, state, done)
+
+        self.memory.append(episode)
 
         if len(self.memory) > self.replay_buffer_size:
             self.memory.pop(0)
@@ -177,7 +196,7 @@ class DQNAgent:
 
         if self.iteration % 25000 == 0:
             print("Saving model")
-            torch.save(self.model, f"model/{self.name}_model_" + str(self.iteration) + ".pth")
+            torch.save(self.model, f"models/{self.name}_model_" + str(self.iteration) + ".pth")
 
         return action
 

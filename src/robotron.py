@@ -130,7 +130,6 @@ class Robotron:
         data['env_max'] = max(self.profile_data["env"])
         data['env_mean'] = mean(self.profile_data["env"])
         self.ui_q_out.put_nowait(('data', data))
-        self.ui_q_out.put_nowait(('rewards', (data['movement_reward'], data['shooting_reward'])))
 
     def run(self):
         """ Run the player """
@@ -161,7 +160,8 @@ class Robotron:
                 if self.ai_in_control:
                     if self.state == STATE.RESETTING:
                         self.output.reset(wait_frame)
-                        if wait_frame > 10:
+                        # print(wait_frame)
+                        if wait_frame > 8:
                             if data["score"] == 0:
                                 self.env.reset()
                                 self.state = STATE.RUNNING
@@ -175,6 +175,8 @@ class Robotron:
                         self.state = STATE.RESETTING
 
                     elif self.state == STATE.RUNNING and data["active"]:
+                        self.ui_q_out.put_nowait(('rewards', (data['movement_reward'], data['shooting_reward'])))
+
                         cum_shooting += data["shooting_reward"]
                         cum_movement += data["movement_reward"]
                         wait_frame = 0
@@ -186,8 +188,10 @@ class Robotron:
                         try:
                             move, moveq, move_epsilon = self.move_q_in.get(True, 1)
                             shoot, shootq, shoot_epsilon = self.shoot_q_in.get(True, 1)
-                            data['moveq'] = moveq
-                            data['shootq'] = shootq
+                            if moveq != 0:
+                                data['moveq'] = moveq
+                            if shootq != 0:
+                                data['shootq'] = shootq
                             data['move_epsilon'] = move_epsilon
                             data['shoot_epsilon'] = shoot_epsilon
                         except queue.Empty:
@@ -212,7 +216,6 @@ class Robotron:
                 if not self.ui_q_in.empty():
                     key = self.ui_q_in.get_nowait()
                     if key:
-                        print(key)
                         self.handle_input(key)
                         time.sleep(0.1)
                         self.output.none()

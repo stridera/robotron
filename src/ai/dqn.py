@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """ The DQN Model """
+""" Heavily inspired by https://www.toptal.com/deep-learning/pytorch-reinforcement-learning-tutorial """
 import random
 import numpy as np
 

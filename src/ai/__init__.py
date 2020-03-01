@@ -1,2 +1,1 @@
-from .double_dqn import DDQNAgent
-from .dqn import DQNAgent
+from .kiss_ai import AI

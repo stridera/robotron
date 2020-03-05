@@ -56,10 +56,10 @@ class Graph:
                 )
             self.ax[i].legend(loc='upper left')
 
-    def add_graph(self, name: str, title: Optional[str] = "", buffer_size: int = 100):
+    def add_graph(self, name: str, title: Optional[str] = "", buffer_size: int = 100,
+                  initial_limits: Tuple[int, int] = (0, 10)):
         """ Add a graph """
-        self.graphs[name] = self.__graph(title)
-        self.graphs[name].buffer_size = buffer_size
+        self.graphs[name] = self.__graph(title, buffer_size, initial_limits)
 
     def add_line(self, graph_name: str, name: str, format: str, label: Optional[str] = "") -> None:
         """ Add a new line to the graph """

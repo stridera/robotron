@@ -23,8 +23,9 @@ class Environment():
     # Number of inactive frames before we believe the game is over.  Should be enough to handle level transitions.
     MAX_INACTIVE = 0
 
-    CIVILIAN_REWARD = 50
-    DEATH_REWARD = -100
+    CIVILIAN_REWARD = 1
+    ALIVE_REWARD = 0.2
+    DEATH_REWARD = -1
 
     def __init__(self):
         ''' constructor '''
@@ -50,7 +51,6 @@ class Environment():
         self.lives.set_all(2)
         self.last_score = 0
         self.last_lives = 0
-        self.game_over = False
 
     def process(self, image):
         """
@@ -65,7 +65,8 @@ class Environment():
         movement_reward = 0
         active = False
         score_delta = 0
-        game_over = False
+        died = False
+        reset_required = False
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         gamebox = crop(gray, Environment.GAMEBOX)
@@ -79,15 +80,17 @@ class Environment():
             active = True
             self.frame += 1
 
-            movement_reward += 10
-
             lives_after = self.lives.set(self.lives_processor.getLives(gray))
             if lives_after < self.last_lives:
-                movement_reward += self.DEATH_REWARD
+                died = True
+                movement_reward = self.DEATH_REWARD
+            else:
+                movement_reward = self.ALIVE_REWARD
+
             self.last_lives = lives_after
 
             if self.last_lives == 0:
-                game_over = True
+                reset_required = True
 
             score_after = self.score.set(score)
             score_delta = score_after - self.last_score
@@ -110,7 +113,7 @@ class Environment():
                     score_delta -= 1000
 
             if score_delta > 0:
-                score_delta = score_delta
+                score_delta = 1
             else:
                 score_delta = 0
 
@@ -121,9 +124,10 @@ class Environment():
             'movement_reward': movement_reward,
             'shooting_reward': score_delta,
             'active': active,
-            'game_over': game_over,
+            'died': died,
+            'reset_required': reset_required,
             'inactive_frame_count': self.inactive_frames,
         }
 
         # default size: 492, 665
-        return cv2.resize(gamebox, (492//2, 665//2)), data
+        return cv2.resize(gamebox / 255., (492//4, 665//4), interpolation=cv2.INTER_LINEAR), data

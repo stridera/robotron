@@ -43,16 +43,15 @@ class UI:
         cv2.destroyAllWindows()
 
     def initialize(self):
-        cv2.namedWindow(self.WINDOW_NAME)
+        cv2.namedWindow(self.WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
 
         self.graph = Graph((5, 5))
         self.graph.add_graph("ep", "Score of last 1000 Epoch", 1000)
-        self.graph.add_line("ep", "move", "g-", "Move Score")
-        self.graph.add_line("ep", "shoot", "r-", "Shoot Score")
+        self.graph.add_line("ep", "score", "g-", "Score")
 
-        self.graph.add_graph("rewards", "Reward for last 100 actions")
-        self.graph.add_line("rewards", "move", "g-", "Movement")
-        self.graph.add_line("rewards", "shoot", "r-", "Shooting")
+        self.graph.add_graph("q", "Q-Values for last 100 actions", initial_limits=(0, 1))
+        self.graph.add_line("q", "move", "g-", "Movement")
+        self.graph.add_line("q", "shoot", "r-", "Shooting")
 
         self.initialized = True
 
@@ -71,7 +70,7 @@ class UI:
             f"Active: {data['active']}  Game Over: {data['game_over']}",
             f"AI in Controlled: {data['ai_in_control']} State: {data['state']}",
             f"Epsilons:  Shoot: {data['shoot_epsilon']:.4f}  Move: {data['move_epsilon']:.4f}",
-            f"Q Values:  Shoot: {data['shootq']:.4f}  Move: {data['moveq']:.4f}",
+            f"Rewards:  Shoot: {data['shooting_reward']}  Move: {data['movement_reward']}",
             "Profiling Times: (Last 100 frames)",
             f"  - Total: Max: {data['all_max']:.4f}ms  Average: {data['all_mean']:.4f}ms",
             f"  - AI: Max: {data['ai_max']:.4f}ms  Average: {data['ai_mean']:.4f}ms",
@@ -111,6 +110,8 @@ class UI:
                     type, val = data
                     if type == 'data':
                         self.data.update(val)
+                    elif type == 'score':
+                        self.graph.add('ep', 'score', val)
                     else:
                         move, shoot = val
                         self.graph.add(type, 'move', move)
@@ -118,10 +119,14 @@ class UI:
                 else:
                     return
 
-            resp = self.show_screen(image)
-            if not resp:
+            if cv2.getWindowProperty(self.WINDOW_NAME, 0) >= 0:
+                resp = self.show_screen(image)
+                if not resp:
+                    out_queue.put(None)
+                    return
+
+                if resp != -1:
+                    out_queue.put_nowait(resp)
+            else:
                 out_queue.put(None)
                 return
-
-            if resp != -1:
-                out_queue.put_nowait(resp)

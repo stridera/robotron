@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import serial
+import time
 
 
 class Output():
@@ -65,23 +66,24 @@ class Output():
     def back(self):
         self.__write(self.BACK)
 
-    def a(self):
-        self.__write(2)
-
     def none(self):
         self.__write(0)
+
+    def quick_press(self, key):
+        time.sleep(0.3)
+        self.__write(key)
+        time.sleep(0.3)
+        self.none()
 
     def close(self):
         if self.ser is not None:
             self.ser.close()
 
-    def reset(self, frame=0):
-        if frame % 20 == 0:
-            self.start()
-        elif frame % 2 == 0:
-            self.__write(self.BTN_A)
-        else:
-            self.none()
+    def reset(self):
+        self.none()
+        self.quick_press(self.START)
+        for _ in range(5):
+            self.quick_press(self.BTN_A)
 
 
 if __name__ == "__main__":

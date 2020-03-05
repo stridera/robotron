@@ -1,102 +1,65 @@
 # -*- coding: utf-8 -*-
-""" The DQN Model """
-""" Heavily inspired by https://www.toptal.com/deep-learning/pytorch-reinforcement-learning-tutorial """
+r"""
+The DQN Model
+
+Research:
+- https://www.toptal.com/deep-learning/pytorch-reinforcement-learning-tutorial
+- https://github.com/ejmejm/Q-Learning-Tutorials/blob/master/DQN_target.ipynb
+- https://github.com/pytorch/tutorials/blob/master/intermediate_source/reinforcement_q_learning.py
+"""
+
+
 import random
 import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-
-class SpatialCrossMapLRN(nn.Module):
-    def __init__(self, local_size=1, alpha=1.0, beta=0.75, k=1, ACROSS_CHANNELS=True):
-        super(SpatialCrossMapLRN, self).__init__()
-        self.ACROSS_CHANNELS = ACROSS_CHANNELS
-        if ACROSS_CHANNELS:
-            self.average = nn.AvgPool3d(
-                kernel_size=(local_size, 1, 1),
-                stride=1,
-                padding=(int((local_size - 1.0) / 2), 0, 0),
-            )
-        else:
-            self.average = nn.AvgPool2d(
-                kernel_size=local_size, stride=1, padding=int((local_size - 1.0) / 2)
-            )
-        self.alpha = alpha
-        self.beta = beta
-        self.k = k
-
-    def forward(self, x):
-        if self.ACROSS_CHANNELS:
-            div = x.pow(2).unsqueeze(1)
-            div = self.average(div).squeeze(1)
-            div = div.mul(self.alpha).add(self.k).pow(self.beta)
-        else:
-            div = x.pow(2)
-            div = self.average(div)
-            div = div.mul(self.alpha).add(self.k).pow(self.beta)
-        x = x.div(div)
-        return x
-
-
-class DQN(nn.Module):
-    def __init__(self, number_of_actions=9):
-        super(DQN, self).__init__()
-        self.number_of_actions = number_of_actions
-        self.features = nn.Sequential(
-            nn.Conv2d(4, 96, (7, 7), (2, 2)),
-            nn.ReLU(),
-            SpatialCrossMapLRN(5, 0.0005, 0.75, 2),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
-            nn.Conv2d(96, 256, (5, 5), (2, 2), (1, 1)),
-            nn.ReLU(),
-            SpatialCrossMapLRN(5, 0.0005, 0.75, 2),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
-            nn.Conv2d(256, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
-        )
-        self.classif = nn.Sequential(
-            nn.Linear(35840, 4096),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(4096, 4096),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(4096, number_of_actions),
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classif(x)
-        return x
+from ai.models import DQN as model
 
 
 class DQNAgent:
-    def __init__(self, name, device=0, n_actions=9, replay_buffer_size=50000, buffer_size=7, batch_size=32, gamma=0.98):
+    def __init__(self, name, device=0, frame_buffer=4, n_actions=9, replay_buffer_size=50000, death_delay=9,
+                 reward_delay=3, batch_size=32, gamma=0.98):
+        """The DQN Agent
+
+        Arguments:
+            name {string} -- [description]
+
+        Keyword Arguments:
+            device {int} -- The CUDA device (default: {0})
+            frame_buffer {int} -- Number of frames to pass to model (stacked images) (default: {4})
+            n_actions {int} -- Number of actions to return (defaults to 9: 8 cardinal, and none) (default: {9})
+            replay_buffer_size {int} -- DQN Experienced Replay Buffer (default: {50000})
+            death_delay {int} -- Episode Buffer to keep.  Train on info n frames old.  Used to handle death delay. (default: {7})
+            reward_delay {int} -- Number of frames to delay the reward.  Used to handle the noise delay. (default: {3})
+            batch_size {int} -- Number of items to include in a training batch (default: {32})
+            gamma {float} -- The reward discount factor (default: {0.98})
+        """
         self.name = name
         self.device = device
+        self.frame_buffer = frame_buffer
         self.n_actions = n_actions
         self.batch_size = batch_size
         self.replay_buffer_size = replay_buffer_size
-        self.buffer_size = buffer_size
         self.gamma = gamma
-        self.buffer = []
         self.memory = []
+        self.death_delay = death_delay
+        self.reward_delay = reward_delay
+
         self.last_state = None
+
+        self.state_buffer = []
+        self.reward_buffer = []
+        self.action_buffer = []
+
         self.iteration = 0
 
         self.epsilon = 1.0  # exploration probability at start
         self.epsilon_min = 0.01  # minimum exploration probability
-        self.epsilon_decay = 0.000005  # exponential decay rate for exploration prob
+        self.epsilon_decay = 0.00005  # exponential decay rate for exploration prob
 
-        self.model = DQN(n_actions).to(self.device)
+        self.model = model(frame_buffer, n_actions).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=1e-6)
         self.criterion = nn.MSELoss()
 
@@ -108,22 +71,17 @@ class DQNAgent:
         minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
 
         # unpack minibatch
-        last_state_batch = torch.cat(tuple(d[0] for d in minibatch))
-        action_batch = torch.cat(tuple(d[1] for d in minibatch))
-        reward_batch = torch.cat(tuple(d[2] for d in minibatch))
-        state_batch = torch.cat(tuple(d[3] for d in minibatch))
+        last_state_batch = torch.cat(tuple(d[0] for d in minibatch)).to(self.device)
+        action_batch = torch.cat(tuple(d[1] for d in minibatch)).to(self.device)
+        reward_batch = torch.cat(tuple(d[2] for d in minibatch)).to(self.device)
+        state_batch = torch.cat(tuple(d[3] for d in minibatch)).to(self.device)
 
-        last_state_batch = last_state_batch.to(self.device)
-        action_batch = action_batch.to(self.device)
-        reward_batch = reward_batch.to(self.device)
-        state_batch = state_batch.to(self.device)
+        # get output for the state
+        output_state_batch = self.model(state_batch).to(self.device)
 
-        # get output for the next state
-        output_1_batch = self.model(state_batch).to(self.device)
-
-        # set y_j to r_j for terminal state, otherwise to r_j + gamma*max(Q)
+        # set y_batch to reward for terminal state, otherwise to reward + gamma*max(Q)
         y_batch = torch.stack(tuple(reward_batch[i] if minibatch[i][4]
-                                    else reward_batch[i] + self.gamma * torch.max(output_1_batch[i])
+                                    else reward_batch[i] + self.gamma * torch.max(output_state_batch[i])
                                     for i in range(len(minibatch))))
 
         # extract Q-value
@@ -135,6 +93,7 @@ class DQNAgent:
         # returns a new Tensor, detached from the current graph, the result will never require gradient
         y_batch = y_batch.detach()
 
+        # print("qv", q_value, y_batch.shape)
         # calculate loss
         loss = self.criterion(q_value, y_batch)
 
@@ -155,7 +114,52 @@ class DQNAgent:
         else:
             return random.randrange(self.n_actions), 0, epsilon
 
-    def play(self, image, action, reward, done):
+    def update_memory(self, state, action, reward, dead):
+        self.state_buffer.append(state)
+        self.action_buffer.append(action)
+
+        if len(self.state_buffer) >= self.reward_delay:
+            # We'll skip appending rwards until we reach the reward delay
+            self.reward_buffer.append(reward)
+
+        if len(self.state_buffer) > self.death_delay:
+            # We'll only enact on data once we're past the death delay
+            state = self.state_buffer.pop(0)
+            if dead:
+                # If we're dead, add this data as terminal and clear everything to start again
+                self.state_buffer = []
+                self.action_buffer = []
+                self.reward_buffer = []
+            else:
+                action = self.action_buffer.pop(0)
+                reward = self.reward_buffer.pop(0)
+
+            episode = (self.last_state, action, reward, state, dead)
+            self.memory.append(episode)
+
+        if len(self.memory) > self.replay_buffer_size:
+            self.memory.pop(0)
+
+    def play(self, image, action, reward, dead):
+        """Play a round.
+        Note:
+            There are two delays to consider:
+            - Reward Delay: In an effort to handle noise (screen flashes and numbers vanish for a frame) it takes 3 frames
+                for the scores to update.  Variable for this is score_delay.
+            - Death Delay: We don't detect a death until after the character has reloaded and the life marker vanishes.
+                Takes around 7 frames.  Variable for this buffer size.
+
+            To handle this, we're going to keep an array of the last (self.buffer_size) rounds.  If we
+
+        Arguments:
+            image {ndarray} -- The image data
+            action {int} -- The last action taken
+            reward {float} -- Reward from -1 to 1
+            dead {bool} -- terminal state (character has died)
+
+        Returns:
+            int -- new action
+        """
         self.iteration += 1
 
         image = torch.from_numpy(np.expand_dims(image, axis=0)).float()
@@ -163,33 +167,10 @@ class DQNAgent:
         reward = torch.tensor([reward], dtype=torch.float32)
 
         if self.last_state is None:
-            self.last_state = torch.cat((image, image, image, image)).unsqueeze(0)
-
+            self.last_state = torch.cat(([image]*self.frame_buffer)).unsqueeze(0)
         state = torch.cat((self.last_state.squeeze(0)[1:, :, :], image)).unsqueeze(0)
 
-        episode = (self.last_state, action, reward, state, done)
-
-        # The negative death reward doesn't trigger until like 8 frames late.  In order to make
-        # the model better represent that in the reward, we'll keep a buffer and we'll train on
-        # data that's 8 frames old.  We'll update the reward if we see a negative
-        if self.name == 'move':
-            died = False
-            if reward < 0:
-                reward = torch.tensor([0.], dtype=torch.float32)
-                died = True
-            self.buffer.append((self.last_state, action, reward, state, done))
-            if len(self.buffer) > self.buffer_size:
-                episode = self.buffer.pop(0)
-                if died:
-                    (self.last_state, action, reward, state, done) = episode
-                    reward -= 100
-                    episode = (self.last_state, action, reward, state, done)
-
-        self.memory.append(episode)
-
-        if len(self.memory) > self.replay_buffer_size:
-            self.memory.pop(0)
-
+        self.update_memory(state, action, reward, dead)
         self.update_network()
         action = self.get_action(state)
 

@@ -136,8 +136,6 @@ class Robotron:
 
         try:
             wait_frame = 0
-            cum_shooting = 0
-            cum_movement = 0
 
             self.move_thread.start()
             self.shoot_thread.start()
@@ -159,39 +157,31 @@ class Robotron:
 
                 if self.ai_in_control:
                     if self.state == STATE.RESETTING:
-                        self.output.reset(wait_frame)
-                        # print(wait_frame)
-                        if wait_frame > 8:
-                            if data["score"] == 0:
-                                self.env.reset()
-                                self.state = STATE.RUNNING
-                                self.episode += 1
+                        if wait_frame % 10 == 0:
+                            self.output.reset()
+                        elif data["score"] == 0:
+                            self.env.reset()
+                            self.state = STATE.RUNNING
+                            self.episode += 1
+
                         wait_frame += 1
 
-                    elif data["game_over"]:
-                        self.ui_q_out.put_nowait(('ep', (cum_movement, cum_shooting)))
-                        cum_shooting = 0
-                        cum_movement = 0
+                    elif data["reset_required"]:
+                        self.ui_q_out.put_nowait(('score', (data['score'])))
                         self.state = STATE.RESETTING
 
                     elif self.state == STATE.RUNNING and data["active"]:
-                        self.ui_q_out.put_nowait(('rewards', (data['movement_reward'], data['shooting_reward'])))
-
-                        cum_shooting += data["shooting_reward"]
-                        cum_movement += data["movement_reward"]
                         wait_frame = 0
 
                         ai_timer = time.time()
-                        self.move_q_out.put((game_image, move, data["movement_reward"], data["game_over"]))
-                        self.shoot_q_out.put((game_image, shoot, data["shooting_reward"], data["game_over"]))
+                        self.move_q_out.put((game_image, move, data["movement_reward"], data["died"]))
+                        self.shoot_q_out.put((game_image, shoot, data["shooting_reward"], data["died"]))
 
                         try:
                             move, moveq, move_epsilon = self.move_q_in.get(True, 1)
                             shoot, shootq, shoot_epsilon = self.shoot_q_in.get(True, 1)
-                            if moveq != 0:
-                                data['moveq'] = moveq
-                            if shootq != 0:
-                                data['shootq'] = shootq
+                            self.ui_q_out.put_nowait(('q', (moveq, shootq)))
+
                             data['move_epsilon'] = move_epsilon
                             data['shoot_epsilon'] = shoot_epsilon
                         except queue.Empty:
@@ -229,8 +219,9 @@ class Robotron:
                 if loop_time < self.loop_time:
                     sleep_time = self.loop_time - loop_time
                     time.sleep(sleep_time)
-                else:
+                elif self.state != STATE.RESETTING:
                     print('Loop took longer than loop_time: ', loop_time)
+
         except (KeyboardInterrupt, BrokenPipeError):
             print("Interrupt detected.  Exiting...")
 

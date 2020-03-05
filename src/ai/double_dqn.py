@@ -5,9 +5,10 @@ from collections import namedtuple
 import numpy as np
 
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+
+from ai.models import SCM as model
 
 Samples = namedtuple("Samples", ("state", "action", "state_prime", "reward", "done"))
 
@@ -34,75 +35,6 @@ class ReplayMemory:
         return len(self.memory)
 
 
-class SpatialCrossMapLRN(nn.Module):
-    def __init__(self, local_size=1, alpha=1.0, beta=0.75, k=1, ACROSS_CHANNELS=True):
-        super(SpatialCrossMapLRN, self).__init__()
-        self.ACROSS_CHANNELS = ACROSS_CHANNELS
-        if ACROSS_CHANNELS:
-            self.average = nn.AvgPool3d(
-                kernel_size=(local_size, 1, 1),
-                stride=1,
-                padding=(int((local_size - 1.0) / 2), 0, 0),
-            )
-        else:
-            self.average = nn.AvgPool2d(
-                kernel_size=local_size, stride=1, padding=int((local_size - 1.0) / 2)
-            )
-        self.alpha = alpha
-        self.beta = beta
-        self.k = k
-
-    def forward(self, x):
-        if self.ACROSS_CHANNELS:
-            div = x.pow(2).unsqueeze(1)
-            div = self.average(div).squeeze(1)
-            div = div.mul(self.alpha).add(self.k).pow(self.beta)
-        else:
-            div = x.pow(2)
-            div = self.average(div)
-            div = div.mul(self.alpha).add(self.k).pow(self.beta)
-        x = x.div(div)
-        return x
-
-
-class DoubleDQN(nn.Module):
-    def __init__(self, number_of_actions=9):
-        super(DoubleDQN, self).__init__()
-        self.number_of_actions = number_of_actions
-        self.features = nn.Sequential(
-            nn.Conv2d(4, 96, (7, 7), (2, 2)),
-            nn.ReLU(),
-            SpatialCrossMapLRN(5, 0.0005, 0.75, 2),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
-            nn.Conv2d(96, 256, (5, 5), (2, 2), (1, 1)),
-            nn.ReLU(),
-            SpatialCrossMapLRN(5, 0.0005, 0.75, 2),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
-            nn.Conv2d(256, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, (3, 3), (1, 1), (1, 1)),
-            nn.ReLU(),
-            nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
-        )
-        self.classif = nn.Sequential(
-            nn.Linear(35840, 4096),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(4096, 4096),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(4096, number_of_actions),
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classif(x)
-        return x
-
-
 class DDQNAgent:
     def __init__(self, name, device=0, n_actions=9, replay_buffer_size=50000, batch_size=32, gamma=0.98):
         self.name = name
@@ -112,11 +44,11 @@ class DDQNAgent:
         self.memory = ReplayMemory(replay_buffer_size)
         self.last_state = None
         self.iteration = 0
-        self.target_update = 10
+        self.target_update = 100
         self.gamma = gamma
 
-        self.policy_net = DoubleDQN().to(self.device)
-        self.target_net = DoubleDQN().to(self.device)
+        self.policy_net = model().to(self.device)
+        self.target_net = model().to(self.device)
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=1e-3)
 
         self.epsilon = 0.05

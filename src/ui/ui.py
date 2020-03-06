@@ -16,16 +16,16 @@ class UI:
             'frame': 0,
             'score': 0,
             'lives': 0,
-            'movement_reward': 0,
-            'shooting_reward': 0,
+            'dead': 0,
+            'reward': 0,
             'active': 0,
+            'move': 0,
+            'shoot': 0,
             'game_over': 0,
             'ai_in_control': 0,
             'state': 0,
-            'shoot_epsilon': 0,
-            'move_epsilon': 0,
-            'shootq': 0,
-            'moveq': 0,
+            'epsilon': 0,
+            'q_value': 0,
             'all_max': 0,
             'all_mean': 0,
             'ai_max': 0,
@@ -46,14 +46,14 @@ class UI:
         cv2.namedWindow(self.WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
 
         self.graph = Graph((5, 5))
-        self.graph.add_graph("ep", "Score of last 1000 Epoch", 1000)
-        self.graph.add_line("ep", "score", "g-", "Score")
+        self.graph.add_graph("score", "Score of last 1000 Epoch", 1000)
+        self.graph.add_line("score", "score", "g-", "Score")
 
-        self.graph.add_graph("q", "Q-Values for last 100 actions", initial_limits=(0, 1))
-        self.graph.add_line("q", "move", "g-", "Movement")
-        self.graph.add_line("q", "shoot", "r-", "Shooting")
+        self.graph.add_graph("q", "Q-Values for last 10000 actions", buffer_size=10000, initial_limits=(0, 1))
+        self.graph.add_line("q", "q", "g-", "Q Value")
 
         self.initialized = True
+        self.movedesc = ["N", "U", "UR", "R", "DR", "D", "DL", "L", "UL"]
 
     def show_screen(self, image):
         """ Show the screen and data """
@@ -67,10 +67,10 @@ class UI:
 
         datastr = [
             f"Episode: {data['episode']} Frame: {data['frame']} Score: {data['score']} Lives: {data['lives']}",
-            f"Active: {data['active']}  Game Over: {data['game_over']}",
+            f"Active: {data['active']}  Episode Over: {data['dead']}",
             f"AI in Controlled: {data['ai_in_control']} State: {data['state']}",
-            f"Epsilons:  Shoot: {data['shoot_epsilon']:.4f}  Move: {data['move_epsilon']:.4f}",
-            f"Rewards:  Shoot: {data['shooting_reward']}  Move: {data['movement_reward']}",
+            f"Action: Move: {self.movedesc[data['move']]}  Shoot: {self.movedesc[data['shoot']]}",
+            f"Epsilon:  {data['epsilon']:.4f}  Reward:  {data['reward']}",
             "Profiling Times: (Last 100 frames)",
             f"  - Total: Max: {data['all_max']:.4f}ms  Average: {data['all_mean']:.4f}ms",
             f"  - AI: Max: {data['ai_max']:.4f}ms  Average: {data['ai_mean']:.4f}ms",
@@ -110,12 +110,9 @@ class UI:
                     type, val = data
                     if type == 'data':
                         self.data.update(val)
-                    elif type == 'score':
-                        self.graph.add('ep', 'score', val)
+                        self.graph.add("q", "q", self.data['q_value'])
                     else:
-                        move, shoot = val
-                        self.graph.add(type, 'move', move)
-                        self.graph.add(type, 'shoot', shoot)
+                        self.graph.add(type, type, val)
                 else:
                     return
 

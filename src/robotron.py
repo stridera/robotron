@@ -10,7 +10,6 @@ r"""
 
 import time
 import multiprocessing as mp
-import queue
 from enum import Enum
 from statistics import mean
 
@@ -37,35 +36,26 @@ class STATE(Enum):
 class Robotron:
     """ Robotron XBox Player """
 
-    def __init__(self, capDevice=2, arduinoPort="/dev/ttyACM0"):
-        mp.set_start_method("spawn")
+    def __init__(self, capDevice=2, arduinoPort="/dev/ttyACM0", image_size=(492//3, 665//3)):
 
         self.cap = capture.VideoCapture(capDevice)
         self.output = control.Output(arduinoPort)
         self.controller = control.Controller()
-        self.env = environment.Environment()
+        self.env = environment.Environment(image_size)
         self.ui = UI(capDevice)
 
-        self.move_ai = ai.DQNAgent('move', 'cuda:0', replay_buffer_size=10000)
-        self.shoot_ai = ai.DQNAgent('shoot', 'cuda:1', replay_buffer_size=10000)
-
-        self.move_q_out = mp.Queue()
-        self.move_q_in = mp.Queue()
-        self.shoot_q_out = mp.Queue()
-        self.shoot_q_in = mp.Queue()
-        self.ui_q_out = mp.Queue()
-        self.ui_q_in = mp.Queue()
-
-        self.ui_thread = mp.Process(target=self.ui.loop, args=(self.ui_q_out, self.ui_q_in,))
-        self.move_thread = mp.Process(target=self.move_ai.loop, args=(self.move_q_out, self.move_q_in,))
-        self.shoot_thread = mp.Process(target=self.shoot_ai.loop, args=(self.shoot_q_out, self.shoot_q_in,))
+        self.ai = ai.DQNAgent('combined', 'cuda:0', replay_buffer_size=40000, image_size=image_size)
 
         self.max_prof = 100
         self.last_active = 0
         self.ai_in_control = False
         self.episode = 0
-        self.loop_time = 0.3
+        self.loop_time = 0.25
         self.profile_data = {"all": [0], "ai": [0], "env": [0]}
+
+        self.ui_q_out = mp.Queue()
+        self.ui_q_in = mp.Queue()
+        self.ui_thread = mp.Process(target=self.ui.loop, args=(self.ui_q_out, self.ui_q_in,))
 
         self.state = STATE.RUNNING
         self.using_controller = False
@@ -74,12 +64,7 @@ class Robotron:
         if self.output:
             self.output.close()
 
-        self.move_q_out.put(None)
-        self.shoot_q_out.put(None)
         self.ui_q_out.put(None)
-
-        self.move_thread.join()
-        self.shoot_thread.join()
         self.ui_thread.join()
 
     def reset(self):
@@ -97,7 +82,7 @@ class Robotron:
         """ Process either keyboard or controller input """
         if key == ord("`"):
             self.ai_in_control = not self.ai_in_control
-            self.state = STATE.RESETTING
+            # self.state = STATE.RESETTING
         elif key == ord("Q"):
             self.state = STATE.QUITTING
         elif key == ord("e"):
@@ -109,7 +94,6 @@ class Robotron:
             print("Using controller: ", "True" if self.using_controller else "False")
         else:
             move_key = {ord("w"): 1, ord("d"): 3, ord("s"): 5, ord("a"): 7}
-
             shoot_key = {ord("i"): 1, ord("l"): 3, ord("k"): 5, ord("j"): 7}
 
             move = move_key.get(key, 0)
@@ -137,12 +121,9 @@ class Robotron:
         try:
             wait_frame = 0
 
-            self.move_thread.start()
-            self.shoot_thread.start()
             self.ui_thread.start()
 
-            move = 0
-            shoot = 0
+            action = 0
 
             for image in self.cap:
                 if image is None:
@@ -161,42 +142,30 @@ class Robotron:
                             self.output.reset()
                         elif data["score"] == 0:
                             self.env.reset()
+                            action = 0
                             self.state = STATE.RUNNING
                             self.episode += 1
 
                         wait_frame += 1
 
-                    elif data["reset_required"]:
-                        self.ui_q_out.put_nowait(('score', (data['score'])))
-                        self.state = STATE.RESETTING
-
                     elif self.state == STATE.RUNNING and data["active"]:
                         wait_frame = 0
 
                         ai_timer = time.time()
-                        self.move_q_out.put((game_image, move, data["movement_reward"], data["died"]))
-                        self.shoot_q_out.put((game_image, shoot, data["shooting_reward"], data["died"]))
-
-                        try:
-                            move, moveq, move_epsilon = self.move_q_in.get(True, 1)
-                            shoot, shootq, shoot_epsilon = self.shoot_q_in.get(True, 1)
-                            self.ui_q_out.put_nowait(('q', (moveq, shootq)))
-
-                            data['move_epsilon'] = move_epsilon
-                            data['shoot_epsilon'] = shoot_epsilon
-                        except queue.Empty:
-                            shoot = 0
-                            move = 0
-                            print("Timeout triggered... moving on")
-
                         self.add_profile_data("ai", time.time() - ai_timer)
+                        action, q_value, epsilon = self.ai.play(game_image, action, data['reward'], data['dead'])
+                        data['q_value'] = q_value
+                        data['epsilon'] = epsilon
 
+                        move = (action // 8) + 1
+                        shoot = (action % 8) + 1
+                        data['move'] = move
+                        data['shoot'] = shoot
                         self.output.move_and_shoot(move, shoot)
 
-                        while not self.move_q_in.empty():
-                            self.move_q_in.get()
-                        while not self.shoot_q_in.empty():
-                            self.shoot_q_in.get()
+                    if self.state == STATE.RUNNING and data["reset_required"]:
+                        self.ui_q_out.put_nowait(('score', (data['score'])))
+                        self.state = STATE.RESETTING
 
                 self.update_ui_data(data)
 

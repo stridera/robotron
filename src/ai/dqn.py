@@ -11,16 +11,47 @@ Research:
 
 import random
 import numpy as np
+from collections import namedtuple
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
-from ai.models import DQN as model
+import cv2
+# import torchvision
+# from torch.utils.tensorboard import SummaryWriter
+
+from ai.models import TDQN as model
+
+Samples = namedtuple("Samples", ("state", "action", "state_prime", "reward", "done"))
+
+
+class ReplayMemory:
+    """ Holds the replay buffer for the model """
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Samples(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 
 
 class DQNAgent:
-    def __init__(self, name, device=0, frame_buffer=4, n_actions=9, replay_buffer_size=50000, death_delay=9,
-                 reward_delay=3, batch_size=32, gamma=0.98):
+    def __init__(self, name, device=0, frame_buffer=4, n_actions=64, replay_buffer_size=50000, death_delay=9,
+                 image_size=(), reward_delay=3, batch_size=32, gamma=0.98):
         """The DQN Agent
 
         Arguments:
@@ -41,80 +72,121 @@ class DQNAgent:
         self.frame_buffer = frame_buffer
         self.n_actions = n_actions
         self.batch_size = batch_size
-        self.replay_buffer_size = replay_buffer_size
         self.gamma = gamma
-        self.memory = []
-        self.death_delay = death_delay
-        self.reward_delay = reward_delay
 
-        self.last_state = None
-
+        self.memory = ReplayMemory(replay_buffer_size)
         self.state_buffer = []
         self.reward_buffer = []
         self.action_buffer = []
+        self.last_state = None
+
+        self.death_delay = death_delay
+        self.reward_delay = reward_delay
 
         self.iteration = 0
 
-        self.epsilon = 1.0  # exploration probability at start
-        self.epsilon_min = 0.01  # minimum exploration probability
-        self.epsilon_decay = 0.00005  # exponential decay rate for exploration prob
+        self.epsilon = lambda step: np.clip(1 - 0.9 * (step/100000), 0.1, 1)
 
-        self.model = model(frame_buffer, n_actions).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=1e-6)
+        screen_height, screen_width = image_size
+        self.policy_net = model(frame_buffer, screen_height, screen_width, n_actions).to(device)
+        self.target_net = model(frame_buffer, screen_height, screen_width, n_actions).to(device)
+        # self.policy_net = torch.load("models/combined_model_100.pth")
+        # self.policy_net.eval()
+
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
+
+        self.model_update_freq = 100
+
+        self.optimizer = optim.RMSprop(self.policy_net.parameters())
         self.criterion = nn.MSELoss()
 
+        self.writer_name = 'runs/robotron'
+        # self.writer = SummaryWriter(self.writer_name)
+
     def update_network(self):
+        """
+        Update the network.
+        Taken from the pytorch tutorial.
+        """
         if len(self.memory) < self.batch_size:
             return
 
-        # sample random minibatch
-        minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
+        transitions = self.memory.sample(self.batch_size)
+        # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+        # detailed explanation). This converts batch-array of Transitions
+        # to Transition of batch-arrays.
+        batch = Samples(*zip(*transitions))
 
-        # unpack minibatch
-        last_state_batch = torch.cat(tuple(d[0] for d in minibatch)).to(self.device)
-        action_batch = torch.cat(tuple(d[1] for d in minibatch)).to(self.device)
-        reward_batch = torch.cat(tuple(d[2] for d in minibatch)).to(self.device)
-        state_batch = torch.cat(tuple(d[3] for d in minibatch)).to(self.device)
+        # Compute a mask of non-final states and concatenate the batch elements
+        # (a final state would've been the one after which simulation ended)
+        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
+                                                batch.state_prime)), device=self.device, dtype=torch.bool)
+        non_final_next_states = torch.cat([s for s in batch.state_prime if s is not None]).to(self.device)
+        state_batch = torch.cat(batch.state).to(self.device)
+        action_batch = torch.cat(batch.action).to(self.device)
+        reward_batch = torch.cat(batch.reward).to(self.device)
 
-        # get output for the state
-        output_state_batch = self.model(state_batch).to(self.device)
+        # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
+        # columns of actions taken. These are the actions which would've been taken
+        # for each batch state according to policy_net
+        state_action_values = self.policy_net(state_batch).gather(1, action_batch)
 
-        # set y_batch to reward for terminal state, otherwise to reward + gamma*max(Q)
-        y_batch = torch.stack(tuple(reward_batch[i] if minibatch[i][4]
-                                    else reward_batch[i] + self.gamma * torch.max(output_state_batch[i])
-                                    for i in range(len(minibatch))))
+        # Compute V(s_{t+1}) for all next states.
+        # Expected values of actions for non_final_next_states are computed based
+        # on the "older" target_net; selecting their best reward with max(1)[0].
+        # This is merged based on the mask, such that we'll have either the expected
+        # state value or 0 in case the state was final.
+        next_state_values = torch.zeros(self.batch_size, device=self.device)
+        next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
+        # Compute the expected Q values
+        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
 
-        # extract Q-value
-        q_value = self.model(last_state_batch).gather(1, action_batch).squeeze()
+        # Compute Huber loss
+        loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
+        # self.writer.add_scalar('Train/Loss', loss.item(), self.iteration)
 
-        # PyTorch accumulates gradients by default, so they need to be reset in each pass
+        # Optimize the model
         self.optimizer.zero_grad()
-
-        # returns a new Tensor, detached from the current graph, the result will never require gradient
-        y_batch = y_batch.detach()
-
-        # print("qv", q_value, y_batch.shape)
-        # calculate loss
-        loss = self.criterion(q_value, y_batch)
-
-        # do backward pass
         loss.backward()
+        for param in self.policy_net.parameters():
+            param.grad.data.clamp_(-1, 1)
+
         self.optimizer.step()
 
+        if self.iteration % self.model_update_freq == 0:
+            self.target_net.load_state_dict(self.policy_net.state_dict())
+
     def get_action(self, state):
-        epsilon = self.epsilon_min + (self.epsilon - self.epsilon_min) * \
-            np.exp(-self.epsilon_decay * self.iteration)
+        """Get an action with epsilon consideration.
+
+        Arguments:
+            state {ndarray} -- Image Stack
+
+        Returns:
+            long -- Action with highest Q value. (Or random if under epsilon)
+        """
 
         sample = random.random()
+        epsilon = self.epsilon(self.iteration)
         if sample > epsilon:
             with torch.no_grad():
                 state = state.to(self.device)
-                q_values = self.model(state).to(self.device)
+                q_values = self.policy_net(state).to(self.device)
+                # self.writer.add_scalar('Play/Q-Value', torch.argmax(q_values).item(), self.iteration)
                 return torch.argmax(q_values).item(), np.max(q_values.cpu().detach().numpy()), epsilon
         else:
             return random.randrange(self.n_actions), 0, epsilon
 
     def update_memory(self, state, action, reward, dead):
+        """Update the self. after considering delays
+
+        Arguments:
+            state {ndarray} -- Image Stack
+            action {long} -- The action taken
+            reward {float} -- Score clipped between -1 and 1
+            dead {bool} -- Did the character die?
+        """
         self.state_buffer.append(state)
         self.action_buffer.append(action)
 
@@ -125,20 +197,32 @@ class DQNAgent:
         if len(self.state_buffer) > self.death_delay:
             # We'll only enact on data once we're past the death delay
             state = self.state_buffer.pop(0)
+            action = self.action_buffer.pop(0)
+
             if dead:
                 # If we're dead, add this data as terminal and clear everything to start again
                 self.state_buffer = []
                 self.action_buffer = []
                 self.reward_buffer = []
             else:
-                action = self.action_buffer.pop(0)
+                # Only update the reward if we're not dead, otherwise use the death -1
                 reward = self.reward_buffer.pop(0)
 
-            episode = (self.last_state, action, reward, state, dead)
-            self.memory.append(episode)
+            self.memory.push(self.last_state, action, state, reward, dead)
 
-        if len(self.memory) > self.replay_buffer_size:
-            self.memory.pop(0)
+            # Debugging!  Show image with states.
+            # img = np.hstack(state.squeeze().cpu().detach().numpy())
+            # thresh = np.zeros_like(img)
+            # thresh[img > 0] = 255
+            # resized = cv2.resize(thresh, (492*4, 665), interpolation=cv2.INTER_LINEAR)
+            # movedesc = ["U", "UR", "R", "DR", "D", "DL", "L", "UL"]
+            # line = f"Action: {movedesc[action.cpu().detach()//8]}, {movedesc[action.cpu().detach()%8]}  Reward: {reward.cpu().detach()}  Dead: {dead}"
+            # cv2.putText(resized, line, (15, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1, cv2.LINE_AA)
+            # cv2.imwrite(f'/home/strider/Code/robotron/tmp/{self.iteration}.png', resized)
+            # img_grid = torchvision.utils.make_grid(state.squeeze())
+            # self.writer.add_image('state', img_grid, self.iteration)
+            # self.writer.add_scalar('Reward', reward, self.iteration)
+            # self.writer.add_scalar('Action', action, self.iteration)
 
     def play(self, image, action, reward, dead):
         """Play a round.
@@ -160,7 +244,6 @@ class DQNAgent:
         Returns:
             int -- new action
         """
-        self.iteration += 1
 
         image = torch.from_numpy(np.expand_dims(image, axis=0)).float()
         action = torch.Tensor([[action]]).long()
@@ -168,6 +251,7 @@ class DQNAgent:
 
         if self.last_state is None:
             self.last_state = torch.cat(([image]*self.frame_buffer)).unsqueeze(0)
+
         state = torch.cat((self.last_state.squeeze(0)[1:, :, :], image)).unsqueeze(0)
 
         self.update_memory(state, action, reward, dead)
@@ -176,14 +260,14 @@ class DQNAgent:
 
         self.last_state = state
 
+        self.iteration += 1
+
+        if self.iteration % 1000 == 0 and len(self.memory) != 50000:
+            print('Iteration: ', self.iteration, 'Memory Size:', len(self.memory))
+
         if self.iteration % 25000 == 0:
             print("Saving model")
-            torch.save(self.model, f"models/{self.name}_model_" + str(self.iteration) + ".pth")
+            torch.save(self.target_net, f"models/{self.name}_model_" + str(self.iteration) + ".pth")
 
+        # self.writer.close()
         return action
-
-    def loop(self, in_queue, out_queue):
-        args = in_queue.get()
-        while args:
-            out_queue.put(self.play(*args))
-            args = in_queue.get()

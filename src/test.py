@@ -51,7 +51,7 @@ def test():
             #     else:
             #         action = 0
 
-            print(f'{iteration}: Action: {action}  QMax: {qmax}, Reward: {reward}, Terminal: {terminal}')
+            #print(f'{iteration}: Action: {action}  QMax: {qmax}, Reward: {reward}, Terminal: {terminal}')
 
             if episode > 10000:
                 env.render()

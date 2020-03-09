@@ -33,11 +33,10 @@ class SpatialCrossMapLRN(nn.Module):
 
 
 class SCM(nn.Module):
-    def __init__(self, number_of_actions=9):
+    def __init__(self, frames, classifier_input, outputs):
         super(SCM, self).__init__()
-        self.number_of_actions = number_of_actions
         self.features = nn.Sequential(
-            nn.Conv2d(4, 96, (7, 7), (2, 2)),
+            nn.Conv2d(frames, 96, (7, 7), (2, 2)),
             nn.ReLU(),
             SpatialCrossMapLRN(5, 0.0005, 0.75, 2),
             nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
@@ -53,14 +52,15 @@ class SCM(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d((3, 3), (2, 2), (0, 0), ceil_mode=True),
         )
+
         self.classif = nn.Sequential(
-            nn.Linear(35840, 4096),
+            nn.Linear(classifier_input, 4096),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(4096, 4096),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(4096, number_of_actions),
+            nn.Linear(4096, outputs),
         )
 
     def forward(self, x):

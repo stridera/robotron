@@ -18,11 +18,12 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-import cv2
+# import cv2
 # import torchvision
 # from torch.utils.tensorboard import SummaryWriter
 
-from ai.models import TDQN as model
+# from ai.models import TDQN as model
+from ai.models import SCM as model
 
 Samples = namedtuple("Samples", ("state", "action", "state_prime", "reward", "done"))
 
@@ -51,7 +52,7 @@ class ReplayMemory:
 
 class DQNAgent:
     def __init__(self, name, device=0, frame_buffer=4, n_actions=64, replay_buffer_size=50000, death_delay=9,
-                 image_size=(), reward_delay=3, batch_size=32, gamma=0.98):
+                 image_size=(), reward_delay=3, batch_size=32, classifier_input=12288, gamma=0.98):
         """The DQN Agent
 
         Arguments:
@@ -75,6 +76,7 @@ class DQNAgent:
         self.gamma = gamma
 
         self.memory = ReplayMemory(replay_buffer_size)
+        self.replay_buffer_size = replay_buffer_size
         self.state_buffer = []
         self.reward_buffer = []
         self.action_buffer = []
@@ -87,9 +89,8 @@ class DQNAgent:
 
         self.epsilon = lambda step: np.clip(1 - 0.9 * (step/100000), 0.1, 1)
 
-        screen_height, screen_width = image_size
-        self.policy_net = model(frame_buffer, screen_height, screen_width, n_actions).to(device)
-        self.target_net = model(frame_buffer, screen_height, screen_width, n_actions).to(device)
+        self.policy_net = model(frame_buffer, classifier_input, n_actions).to(device)
+        self.target_net = model(frame_buffer, classifier_input, n_actions).to(device)
         # self.policy_net = torch.load("models/combined_model_100.pth")
         # self.policy_net.eval()
 
@@ -174,9 +175,9 @@ class DQNAgent:
                 state = state.to(self.device)
                 q_values = self.policy_net(state).to(self.device)
                 # self.writer.add_scalar('Play/Q-Value', torch.argmax(q_values).item(), self.iteration)
-                return torch.argmax(q_values).item(), np.max(q_values.cpu().detach().numpy()), epsilon
+                return torch.argmax(q_values).item(), np.max(q_values.cpu().detach().numpy()), epsilon, False
         else:
-            return random.randrange(self.n_actions), 0, epsilon
+            return random.randrange(self.n_actions), 0, epsilon, True
 
     def update_memory(self, state, action, reward, dead):
         """Update the self. after considering delays
@@ -187,16 +188,16 @@ class DQNAgent:
             reward {float} -- Score clipped between -1 and 1
             dead {bool} -- Did the character die?
         """
-        self.state_buffer.append(state)
+        self.state_buffer.append((self.last_state, state))
         self.action_buffer.append(action)
 
         if len(self.state_buffer) >= self.reward_delay:
-            # We'll skip appending rwards until we reach the reward delay
+            # We'll skip appending rewards until we reach the reward delay
             self.reward_buffer.append(reward)
 
         if len(self.state_buffer) > self.death_delay:
             # We'll only enact on data once we're past the death delay
-            state = self.state_buffer.pop(0)
+            last_state, state = self.state_buffer.pop(0)
             action = self.action_buffer.pop(0)
 
             if dead:
@@ -205,10 +206,10 @@ class DQNAgent:
                 self.action_buffer = []
                 self.reward_buffer = []
             else:
-                # Only update the reward if we're not dead, otherwise use the death -1
+                # Only update the reward if we're not dead, otherwise use the delayed reward
                 reward = self.reward_buffer.pop(0)
 
-            self.memory.push(self.last_state, action, state, reward, dead)
+            self.memory.push(last_state, action, state, reward, dead)
 
             # Debugging!  Show image with states.
             # img = np.hstack(state.squeeze().cpu().detach().numpy())
@@ -224,7 +225,7 @@ class DQNAgent:
             # self.writer.add_scalar('Reward', reward, self.iteration)
             # self.writer.add_scalar('Action', action, self.iteration)
 
-    def play(self, image, action, reward, dead):
+    def train(self, image, action, reward, dead):
         """Play a round.
         Note:
             There are two delays to consider:
@@ -262,7 +263,7 @@ class DQNAgent:
 
         self.iteration += 1
 
-        if self.iteration % 1000 == 0 and len(self.memory) != 50000:
+        if self.iteration % 1000 == 0 and len(self.memory) != self.replay_buffer_size:
             print('Iteration: ', self.iteration, 'Memory Size:', len(self.memory))
 
         if self.iteration % 25000 == 0:
@@ -271,3 +272,13 @@ class DQNAgent:
 
         # self.writer.close()
         return action
+
+    def play(self, image):
+        image = torch.from_numpy(np.expand_dims(image, axis=0)).float()
+
+        if self.last_state is None:
+            self.last_state = torch.cat(([image]*self.frame_buffer)).unsqueeze(0)
+
+        state = torch.cat((self.last_state.squeeze(0)[1:, :, :], image)).unsqueeze(0)
+
+        return self.get_action(state)

@@ -44,7 +44,7 @@ class Robotron:
         self.env = environment.Environment(image_size)
         self.ui = UI(capDevice)
 
-        self.ai = ai.DQNAgent('combined', 'cuda:0', replay_buffer_size=40000, image_size=image_size)
+        self.ai = ai.DQNAgent('scm', 'cuda:0', image_size=image_size)
 
         self.max_prof = 100
         self.last_active = 0
@@ -152,11 +152,11 @@ class Robotron:
                         wait_frame = 0
 
                         ai_timer = time.time()
+                        action, q_value, epsilon, _ = self.ai.train(game_image, action, data['reward'], data['dead'])
                         self.add_profile_data("ai", time.time() - ai_timer)
-                        action, q_value, epsilon = self.ai.play(game_image, action, data['reward'], data['dead'])
+
                         data['q_value'] = q_value
                         data['epsilon'] = epsilon
-
                         move = (action // 8) + 1
                         shoot = (action % 8) + 1
                         data['move'] = move

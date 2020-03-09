@@ -67,8 +67,6 @@ class Environment():
         reset_required = False
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
-        gamebox = crop(thresh, Environment.GAMEBOX)
         score = self.score_processor.get_score(gray)
 
         if score == -1:
@@ -92,23 +90,12 @@ class Environment():
             score_delta = score_after - self.last_score
             self.last_score = score_after
 
-            # Calculate Movement Reward
+            # Calculate Reward
 
-            # while score_delta >= 1000:
-            #     # Assume we collected a civilian - humans are worth an increasing point value.
-            #     # The first human scores 1000 points, the second is worth 2000 points and so
-            #     # on until the point value reaches 5000. The point value will remain at 5000
-            #     # for all the remaining humans in the same wave. When the wave is completed or
-            #     # you have been killed, the points awarded for saving another human will be
-            #     # reset to 1000.
-            #     #
-            #     # For our purpose, we want to remove all of these from the score delta used for
-            #     # the shooting reward and add a bump to the movement reward.
-            #     reward = 1
-            #     while score_delta >= 1000:
-            #         score_delta -= 1000
+            # Lets start with a -0.1 reward to encourage finishing the episode and not running around.
+            reward = -0.1
 
-            # A positive score (civilian grabbed, enemy shot) gives a 1
+            # A score increase (civilian grabbed, enemy shot) gives a 1
             if score_delta > 0:
                 reward = 1.
 
@@ -127,5 +114,7 @@ class Environment():
             'inactive_frame_count': self.inactive_frames,
         }
 
-        # default size: 492, 665
-        return cv2.resize(gamebox / 255., self.output_image_size, interpolation=cv2.INTER_LINEAR), data
+        gamebox = crop(gray, Environment.GAMEBOX)
+        gamebox = cv2.resize(gamebox, self.output_image_size)
+        gamebox[gamebox > 30] = 255
+        return gamebox, data
